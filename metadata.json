@@ -1,0 +1,6 @@
+{
+  "name": "District Advisory - DC Airbnb Listing & Pricing Intelligence",
+  "description": "Executive pricing and revenue intelligence platform for Washington DC property managers advising homeowners on short-term rental performance.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
