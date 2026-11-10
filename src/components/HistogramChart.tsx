@@ -12,6 +12,7 @@ interface HistogramChartProps {
   title?: string;
   bins: BinData[];
   medianPrice: number | null;
+  adjustedPrice?: number | null;
   totalCount: number;
 }
 
@@ -19,6 +20,7 @@ export const HistogramChart: React.FC<HistogramChartProps> = ({
   title = 'Comparable Listings Nightly Price Distribution ($25 Bins)',
   bins,
   medianPrice,
+  adjustedPrice = null,
   totalCount,
 }) => {
   const [hoveredBin, setHoveredBin] = useState<{ bin: BinData; index: number; x: number; y: number } | null>(null);
@@ -26,7 +28,7 @@ export const HistogramChart: React.FC<HistogramChartProps> = ({
   const maxCount = Math.max(...bins.map((b) => b.count), 1);
   const chartHeight = 260;
   const chartWidth = 720;
-  const padding = { top: 35, right: 30, bottom: 45, left: 50 };
+  const padding = { top: 38, right: 30, bottom: 45, left: 50 };
 
   const plotWidth = chartWidth - padding.left - padding.right;
   const plotHeight = chartHeight - padding.top - padding.bottom;
@@ -34,18 +36,18 @@ export const HistogramChart: React.FC<HistogramChartProps> = ({
   // 25 bins
   const binWidth = plotWidth / bins.length;
 
-  // Calculate X position of the median line
-  let medianX: number | null = null;
-  if (medianPrice !== null && medianPrice >= 0) {
-    if (medianPrice >= 600) {
-      // Last bin ($600+)
-      medianX = padding.left + 24 * binWidth + binWidth / 2;
-    } else {
-      // Linear mapping for 0 to 600 over the first 24 bins
-      const bin24Width = binWidth * 24;
-      medianX = padding.left + (medianPrice / 600) * bin24Width;
+  // Calculate X position helper for any dollar price
+  const getXForPrice = (priceVal: number | null): number | null => {
+    if (priceVal === null || priceVal < 0) return null;
+    if (priceVal >= 600) {
+      return padding.left + 24 * binWidth + binWidth / 2;
     }
-  }
+    const bin24Width = binWidth * 24;
+    return padding.left + (priceVal / 600) * bin24Width;
+  };
+
+  const medianX = getXForPrice(medianPrice);
+  const adjustedX = getXForPrice(adjustedPrice);
 
   // Y-axis ticks (4 ticks)
   const yTicks = [0, Math.ceil(maxCount * 0.33), Math.ceil(maxCount * 0.66), maxCount];
@@ -59,13 +61,22 @@ export const HistogramChart: React.FC<HistogramChartProps> = ({
             Nightly listing rates binned in $25 increments up to $600, with $600+ consolidated in terminal bin
           </p>
         </div>
-        {medianPrice !== null && (
-          <div className="flex items-center gap-2 self-start sm:self-auto bg-neutral-100/80 px-2.5 py-1 rounded text-xs font-medium text-neutral-800">
-            <span className="w-2.5 h-0.5 bg-neutral-900 inline-block"></span>
-            <span>Median Nightly Rate: </span>
-            <span className="font-mono font-bold text-neutral-950">{formatCurrency(medianPrice)}</span>
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          {medianPrice !== null && (
+            <div className="flex items-center gap-2 bg-neutral-100 px-2.5 py-1 rounded text-xs font-medium text-neutral-800">
+              <span className="w-2.5 h-0.5 bg-neutral-900 inline-block"></span>
+              <span>Baseline Median: </span>
+              <span className="font-mono font-bold text-neutral-950">{formatCurrency(medianPrice)}</span>
+            </div>
+          )}
+          {adjustedPrice !== null && adjustedPrice !== medianPrice && (
+            <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded text-xs font-medium text-emerald-900">
+              <span className="w-2.5 h-0.5 bg-emerald-600 inline-block"></span>
+              <span>Adjusted Target: </span>
+              <span className="font-mono font-bold text-emerald-950">{formatCurrency(adjustedPrice)}</span>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="relative w-full overflow-x-auto custom-scrollbar">
@@ -136,7 +147,7 @@ export const HistogramChart: React.FC<HistogramChartProps> = ({
             );
           })}
 
-          {/* Median Vertical Line */}
+          {/* Baseline Median Vertical Line */}
           {medianX !== null && (
             <g>
               <line
@@ -144,26 +155,56 @@ export const HistogramChart: React.FC<HistogramChartProps> = ({
                 y1={padding.top}
                 x2={medianX}
                 y2={padding.top + plotHeight}
-                stroke="#0f172a"
-                strokeWidth={2}
-                strokeDasharray="4 2"
+                stroke="#64748b"
+                strokeWidth={1.5}
+                strokeDasharray="3 2"
               />
-              <circle cx={medianX} cy={padding.top} r={3.5} fill="#0f172a" />
               <rect
-                x={Math.min(Math.max(medianX - 38, padding.left), padding.left + plotWidth - 76)}
+                x={Math.min(Math.max(medianX - 34, padding.left), padding.left + plotWidth - 68)}
                 y={padding.top - 20}
+                width={68}
+                height={16}
+                rx={2.5}
+                fill="#64748b"
+              />
+              <text
+                x={Math.min(Math.max(medianX, padding.left + 34), padding.left + plotWidth - 34)}
+                y={padding.top - 8}
+                textAnchor="middle"
+                className="text-[9.5px] font-mono font-medium fill-white"
+              >
+                Base {formatCurrency(medianPrice)}
+              </text>
+            </g>
+          )}
+
+          {/* Amenity-Adjusted Price Vertical Line */}
+          {adjustedX !== null && adjustedPrice !== null && (
+            <g>
+              <line
+                x1={adjustedX}
+                y1={padding.top}
+                x2={adjustedX}
+                y2={padding.top + plotHeight}
+                stroke="#0f172a"
+                strokeWidth={2.2}
+              />
+              <circle cx={adjustedX} cy={padding.top} r={3} fill="#0f172a" />
+              <rect
+                x={Math.min(Math.max(adjustedX - 38, padding.left), padding.left + plotWidth - 76)}
+                y={padding.top - 36}
                 width={76}
                 height={18}
                 rx={3}
                 fill="#0f172a"
               />
               <text
-                x={Math.min(Math.max(medianX, padding.left + 38), padding.left + plotWidth - 38)}
-                y={padding.top - 7}
+                x={Math.min(Math.max(adjustedX, padding.left + 38), padding.left + plotWidth - 38)}
+                y={padding.top - 23}
                 textAnchor="middle"
-                className="text-[10px] font-mono font-semibold fill-white"
+                className="text-[10px] font-mono font-bold fill-white"
               >
-                Med {formatCurrency(medianPrice)}
+                Target {formatCurrency(adjustedPrice)}
               </text>
             </g>
           )}
@@ -178,7 +219,7 @@ export const HistogramChart: React.FC<HistogramChartProps> = ({
             strokeWidth={1}
           />
 
-          {/* X Axis Ticks and Labels: $0, $100, $200, $300, $400, $500, $600+ */}
+          {/* X Axis Ticks and Labels: $0, $100, $200, $300, $400, $500 */}
           {[0, 100, 200, 300, 400, 500].map((val) => {
             const x = padding.left + (val / 600) * (binWidth * 24);
             return (
@@ -197,7 +238,6 @@ export const HistogramChart: React.FC<HistogramChartProps> = ({
           })}
           {/* $600+ tick */}
           <g>
-            const lastX = padding.left + 24 * binWidth + binWidth / 2;
             <line
               x1={padding.left + 24 * binWidth}
               y1={padding.top + plotHeight}

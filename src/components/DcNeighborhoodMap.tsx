@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import L from 'leaflet';
 import { GeoJsonData, MapMetric, NeighborhoodStats, SharedFilters } from '../types';
 import { formatCurrency, formatNumber } from '../utils/math';
-import { ArrowUpDown, MapPin, ChevronRight, AlertTriangle, Layers } from 'lucide-react';
+import { ArrowUpDown, MapPin, ChevronRight, AlertTriangle, Layers, Sparkles } from 'lucide-react';
 
 interface DcNeighborhoodMapProps {
   geoJson: GeoJsonData | null;
@@ -13,6 +13,8 @@ interface DcNeighborhoodMapProps {
   onSelectNeighborhood: (neighborhood: string) => void;
   onNavigateToPricing: () => void;
   filters: SharedFilters;
+  amenityAdjustmentTotal?: number;
+  selectedAmenitiesCount?: number;
 }
 
 export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
@@ -24,6 +26,8 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
   onSelectNeighborhood,
   onNavigateToPricing,
   filters,
+  amenityAdjustmentTotal = 0,
+  selectedAmenitiesCount = 0,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -34,7 +38,7 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
     stats: NeighborhoodStats | null;
   } | null>(null);
 
-  const [tableSortCol, setTableSortCol] = useState<'count' | 'price' | 'nights' | 'revenue'>('price');
+  const [tableSortCol, setTableSortCol] = useState<'count' | 'price' | 'adjustedPrice' | 'nights' | 'revenue'>('price');
   const [tableSortAsc, setTableSortAsc] = useState<boolean>(false);
 
   // Calculate choropleth intervals and color function
@@ -43,6 +47,7 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
     neighborhoodStats.forEach((st) => {
       let val: number | null = null;
       if (selectedMetric === 'price') val = st.medianPrice;
+      else if (selectedMetric === 'adjustedPrice') val = st.adjustedMedianPrice ?? st.medianPrice;
       else if (selectedMetric === 'occupancy') val = st.medianNights;
       else if (selectedMetric === 'revenue') val = st.medianRevenue;
       else if (selectedMetric === 'count') val = st.count;
@@ -69,8 +74,6 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
     const q80 = values[Math.floor(values.length * 0.8)] || 0;
 
     const thresholds = [q20, q40, q60, q80];
-
-    // 5-step clean slate/indigo ramp
 
     const getColor = (val: number | null) => {
       if (val === null || isNaN(val) || val <= 0) return '#f8fafc';
@@ -127,6 +130,7 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
       const st = neighborhoodStats.get(name);
       if (!st) return null;
       if (selectedMetric === 'price') return st.medianPrice;
+      if (selectedMetric === 'adjustedPrice') return st.adjustedMedianPrice ?? st.medianPrice;
       if (selectedMetric === 'occupancy') return st.medianNights;
       if (selectedMetric === 'revenue') return st.medianRevenue;
       if (selectedMetric === 'count') return st.count;
@@ -176,10 +180,17 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
       // Simple tooltip
       let valDisplay = 'No listings';
       if (st) {
-        if (selectedMetric === 'price') valDisplay = st.medianPrice ? `${formatCurrency(st.medianPrice)}/night` : 'No price data';
-        else if (selectedMetric === 'occupancy') valDisplay = st.medianNights ? `${formatNumber(st.medianNights)} nights/yr` : 'No occupancy data';
-        else if (selectedMetric === 'revenue') valDisplay = st.medianRevenue ? `${formatCurrency(st.medianRevenue)}/yr` : 'No revenue data';
-        else if (selectedMetric === 'count') valDisplay = `${st.count} listings`;
+        if (selectedMetric === 'price') {
+          valDisplay = st.medianPrice ? `${formatCurrency(st.medianPrice)}/night` : 'No price data';
+        } else if (selectedMetric === 'adjustedPrice') {
+          valDisplay = st.adjustedMedianPrice ? `${formatCurrency(st.adjustedMedianPrice)}/night (Adjusted)` : 'No price data';
+        } else if (selectedMetric === 'occupancy') {
+          valDisplay = st.medianNights ? `${formatNumber(st.medianNights)} nights/yr` : 'No occupancy data';
+        } else if (selectedMetric === 'revenue') {
+          valDisplay = st.medianRevenue ? `${formatCurrency(st.medianRevenue)}/yr` : 'No revenue data';
+        } else if (selectedMetric === 'count') {
+          valDisplay = `${st.count} listings`;
+        }
       }
 
       layer.bindTooltip(`<strong>${name}</strong><br/>${valDisplay}`, {
@@ -219,6 +230,9 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
       } else if (tableSortCol === 'price') {
         valA = a.medianPrice;
         valB = b.medianPrice;
+      } else if (tableSortCol === 'adjustedPrice') {
+        valA = a.adjustedMedianPrice ?? a.medianPrice;
+        valB = b.adjustedMedianPrice ?? b.medianPrice;
       } else if (tableSortCol === 'nights') {
         valA = a.medianNights;
         valB = b.medianNights;
@@ -234,7 +248,7 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
     });
   }, [neighborhoodStats, tableSortCol, tableSortAsc]);
 
-  const handleTableSort = (col: 'count' | 'price' | 'nights' | 'revenue') => {
+  const handleTableSort = (col: 'count' | 'price' | 'adjustedPrice' | 'nights' | 'revenue') => {
     if (tableSortCol === col) {
       setTableSortAsc(!tableSortAsc);
     } else {
@@ -262,7 +276,23 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
                   : 'text-neutral-600 hover:text-neutral-900'
               }`}
             >
-              Median Nightly Price
+              Baseline Median Price
+            </button>
+            <button
+              onClick={() => onSelectMetric('adjustedPrice')}
+              className={`px-3 py-1.5 text-xs font-medium rounded transition-colors cursor-pointer flex items-center gap-1.5 ${
+                selectedMetric === 'adjustedPrice'
+                  ? 'bg-neutral-900 text-white shadow-xs font-semibold'
+                  : 'text-neutral-700 hover:text-neutral-950 bg-white/60'
+              }`}
+            >
+              <Sparkles className="w-3 h-3 text-amber-400" />
+              <span>Amenity-Adjusted Price</span>
+              {amenityAdjustmentTotal !== 0 && (
+                <span className="text-[10px] font-mono font-bold opacity-90">
+                  ({amenityAdjustmentTotal > 0 ? `+${formatCurrency(amenityAdjustmentTotal)}` : formatCurrency(amenityAdjustmentTotal)})
+                </span>
+              )}
             </button>
             <button
               onClick={() => onSelectMetric('occupancy')}
@@ -292,7 +322,7 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
                   : 'text-neutral-600 hover:text-neutral-900'
               }`}
             >
-              Number of Listings
+              Listings Count
             </button>
           </div>
         </div>
@@ -303,8 +333,17 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
             <div className="flex items-center gap-2">
               <MapPin className="w-4 h-4 text-neutral-900 shrink-0" />
               <div>
-                <span className="text-[11px] text-neutral-500 block">Selected Neighborhood:</span>
-                <span className="text-xs font-bold text-neutral-900">{selectedNeighborhood}</span>
+                <span className="text-[11px] text-neutral-500 block">Selected: {selectedNeighborhood}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-neutral-900 font-mono">
+                    {selectedStats?.adjustedMedianPrice ? formatCurrency(selectedStats.adjustedMedianPrice) : formatCurrency(selectedStats?.medianPrice)}/nt
+                  </span>
+                  {amenityAdjustmentTotal !== 0 && (
+                    <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 px-1 rounded">
+                      +{formatCurrency(amenityAdjustmentTotal)} amenities
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
             <button
@@ -342,9 +381,15 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
                       <span className="font-bold">{hoveredNeighborhood.stats.count}</span>
                     </div>
                     <div className="flex justify-between gap-4">
-                      <span className="text-neutral-500">Median Price:</span>
+                      <span className="text-neutral-500">Baseline Rate:</span>
                       <span className="font-bold">{formatCurrency(hoveredNeighborhood.stats.medianPrice)}</span>
                     </div>
+                    {amenityAdjustmentTotal !== 0 && hoveredNeighborhood.stats.adjustedMedianPrice && (
+                      <div className="flex justify-between gap-4 text-emerald-800 font-bold bg-emerald-50/70 px-1 rounded">
+                        <span>With Owner Amenities:</span>
+                        <span>{formatCurrency(hoveredNeighborhood.stats.adjustedMedianPrice)}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between gap-4">
                       <span className="text-neutral-500">Median Nights/Yr:</span>
                       <span className="font-bold">{hoveredNeighborhood.stats.medianNights ? `${formatNumber(hoveredNeighborhood.stats.medianNights)}d` : '—'}</span>
@@ -373,9 +418,15 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
                     <span className="font-bold">{selectedStats.count}</span>
                   </div>
                   <div className="flex justify-between gap-4">
-                    <span className="text-neutral-500">Median Rate:</span>
+                    <span className="text-neutral-500">Baseline Rate:</span>
                     <span className="font-bold">{formatCurrency(selectedStats.medianPrice)}</span>
                   </div>
+                  {amenityAdjustmentTotal !== 0 && selectedStats.adjustedMedianPrice && (
+                    <div className="flex justify-between gap-4 text-emerald-800 font-bold bg-emerald-50/70 px-1 rounded">
+                      <span>Adjusted Rate:</span>
+                      <span>{formatCurrency(selectedStats.adjustedMedianPrice)}</span>
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (
@@ -388,7 +439,7 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
           {/* Choropleth Legend (Bottom Left) */}
           <div className="absolute bottom-4 left-4 z-[1000] bg-white/95 backdrop-blur-xs border border-neutral-200 rounded-md p-2.5 shadow-md text-xs">
             <span className="text-[10px] font-semibold text-neutral-500 uppercase tracking-wider block mb-1.5">
-              Legend: {selectedMetric === 'price' ? 'Nightly Rate ($)' : selectedMetric === 'occupancy' ? 'Nights / Yr' : selectedMetric === 'revenue' ? 'Annual Rev ($)' : 'Listings'}
+              Legend: {selectedMetric === 'price' ? 'Base Nightly Rate ($)' : selectedMetric === 'adjustedPrice' ? 'Adjusted Rate ($)' : selectedMetric === 'occupancy' ? 'Nights / Yr' : selectedMetric === 'revenue' ? 'Annual Rev ($)' : 'Listings'}
             </span>
             <div className="flex items-center gap-1">
               {colorScale.colors.map((color, idx) => (
@@ -451,7 +502,16 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
                   className="py-2.5 px-3 font-semibold text-right cursor-pointer hover:text-neutral-900"
                 >
                   <div className="flex items-center justify-end gap-1">
-                    Median Price <ArrowUpDown className="w-3 h-3 text-neutral-400" />
+                    Baseline Median <ArrowUpDown className="w-3 h-3 text-neutral-400" />
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleTableSort('adjustedPrice')}
+                  className="py-2.5 px-3 font-semibold text-right cursor-pointer hover:text-neutral-900 bg-neutral-200/50"
+                >
+                  <div className="flex items-center justify-end gap-1 font-bold text-neutral-900">
+                    <Sparkles className="w-3 h-3 text-amber-500" />
+                    Adjusted Rate <ArrowUpDown className="w-3 h-3 text-neutral-400" />
                   </div>
                 </th>
                 <th
@@ -499,7 +559,7 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
                     </td>
                     <td className="py-2 px-3">
                       <div className="flex items-center gap-1.5">
-                        <span className="truncate max-w-[240px]" title={row.neighborhood}>
+                        <span className="truncate max-w-[220px]" title={row.neighborhood}>
                           {row.neighborhood}
                         </span>
                         {!isRanked && (
@@ -517,8 +577,17 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
                     <td className="py-2 px-3 text-right font-mono tabular-nums font-medium">
                       {row.count}
                     </td>
-                    <td className="py-2 px-3 text-right font-mono tabular-nums font-semibold">
+                    <td className="py-2 px-3 text-right font-mono tabular-nums">
                       {formatCurrency(row.medianPrice)}
+                    </td>
+                    <td className="py-2 px-3 text-right font-mono tabular-nums font-bold text-neutral-950 bg-neutral-50/50">
+                      {row.adjustedMedianPrice !== null ? (
+                        <span className={amenityAdjustmentTotal !== 0 ? 'text-emerald-900' : ''}>
+                          {formatCurrency(row.adjustedMedianPrice)}
+                        </span>
+                      ) : (
+                        formatCurrency(row.medianPrice)
+                      )}
                     </td>
                     <td className="py-2 px-3 text-right font-mono tabular-nums">
                       {row.medianNights !== null ? `${formatNumber(row.medianNights)}d` : '—'}

@@ -17,6 +17,7 @@ import {
   SharedFilters,
 } from './types';
 import { calculateMedian, calculateP25, calculateP75 } from './utils/math';
+import { calculateAmenityAdjustments } from './utils/amenityPricing';
 import { Tab1NeighborhoodMap } from './components/Tab1NeighborhoodMap';
 import { Tab2Pricing } from './components/Tab2Pricing';
 import { Tab3BookingsRevenue } from './components/Tab3BookingsRevenue';
@@ -53,6 +54,23 @@ export default function App() {
     roomType: 'Any',
     propertyType: 'Any',
   });
+
+  // Owner Property Amenities & Features State (Shared between Tab 1 & Tab 2)
+  const [ownerAmenities, setOwnerAmenities] = useState<string[]>([
+    'Wifi',
+    'Air conditioning',
+    'Kitchen',
+    'Washer',
+    'Dryer',
+    'Dedicated workspace',
+    'Self check-in',
+  ]);
+
+  const handleToggleAmenity = (name: string) => {
+    setOwnerAmenities((prev) =>
+      prev.includes(name) ? prev.filter((a) => a !== name) : [...prev, name]
+    );
+  };
 
   // Tab 1 Map Metric Selection
   const [selectedMapMetric, setSelectedMapMetric] = useState<MapMetric>('price');
@@ -144,288 +162,6 @@ export default function App() {
       return true;
     });
   };
-
-  // Listings filtered by bedrooms, room type, and property type (across all neighborhoods for Tab 1)
-  const categoryFilteredListings = useMemo(() => {
-    return filterListingsByCategory(listings, filters.bedrooms, filters.roomType, filters.propertyType);
-  }, [listings, filters.bedrooms, filters.roomType, filters.propertyType]);
-
-  // Tab 1: Neighborhood stats across DC
-  const neighborhoodStatsMap = useMemo(() => {
-    const map = new Map<string, NeighborhoodStats>();
-
-    // Group filtered listings by neighborhood
-    const grouped: Record<string, Listing[]> = {};
-    for (const item of categoryFilteredListings) {
-      if (!item.neighbourhood_cleansed) continue;
-      if (!grouped[item.neighbourhood_cleansed]) {
-        grouped[item.neighbourhood_cleansed] = [];
-      }
-      grouped[item.neighbourhood_cleansed].push(item);
-    }
-
-    // Process all 39 DC neighborhoods from geojson or distinct neighborhoods
-    distinctNeighborhoods.forEach((name) => {
-      const items = grouped[name] || [];
-      const count = items.length;
-
-      // Prices (ignoring null/blank)
-      const prices = items.map((i) => i.price).filter((p): p is number => p !== null && !isNaN(p));
-      const medianPrice = calculateMedian(prices);
-
-      // Active listings: number_of_reviews_ltm >= 1
-      const activeItems = items.filter(
-        (i) => i.number_of_reviews_ltm !== null && i.number_of_reviews_ltm >= 1
-      );
-      const activeCount = activeItems.length;
-
-      // Occupancy (active listings only, ignoring null)
-      const occupancies = activeItems
-        .map((i) => i.estimated_occupancy_l365d)
-        .filter((o): o is number => o !== null && !isNaN(o));
-      const medianNights = calculateMedian(occupancies);
-
-      // Revenue (active listings only, ignoring null)
-      const revenues = activeItems
-        .map((i) => i.estimated_revenue_l365d)
-        .filter((rv): rv is number => rv !== null && !isNaN(rv));
-      const medianRevenue = calculateMedian(revenues);
-
-      map.set(name, {
-        neighborhood: name,
-        count,
-        activeCount,
-        medianPrice,
-        medianNights,
-        medianRevenue,
-        isReliable: count >= 10,
-      });
-    });
-
-    return map;
-  }, [categoryFilteredListings, distinctNeighborhoods]);
-
-  // Tab 2 & 3: Comparables matching all 4 shared filters
-  const comparableListings = useMemo(() => {
-    return categoryFilteredListings.filter(
-      (r) => r.neighbourhood_cleansed === filters.neighborhood
-    );
-  }, [categoryFilteredListings, filters.neighborhood]);
-
-  // Tab 2: Pricing Stats
-  const pricingStats = useMemo<PricingStats>(() => {
-    const validPrices = comparableListings
-      .map((r) => r.price)
-      .filter((p): p is number => p !== null && !isNaN(p));
-
-    const count = validPrices.length;
-    const recommendedPrice = calculateMedian(validPrices);
-    const p25Price = calculateP25(validPrices);
-    const p75Price = calculateP75(validPrices);
-
-    // DC-wide median for the exact same bedrooms, room type, property type
-    const dcPrices = categoryFilteredListings
-      .map((r) => r.price)
-      .filter((p): p is number => p !== null && !isNaN(p));
-    const dcWideMedianPrice = calculateMedian(dcPrices);
-
-    // Build $25 bins from $0 to $600 + $600+ terminal bin
-    const bins: { rangeLabel: string; min: number; max: number; count: number }[] = [];
-    for (let i = 0; i < 24; i++) {
-      const min = i * 25;
-      const max = (i + 1) * 25;
-      bins.push({
-        rangeLabel: `$${min} – $${max - 1}`,
-        min,
-        max,
-        count: 0,
-      });
-    }
-    // Final $600+ bin
-    bins.push({
-      rangeLabel: '$600+',
-      min: 600,
-      max: Infinity,
-      count: 0,
-    });
-
-    for (const p of validPrices) {
-      if (p >= 600) {
-        bins[24].count++;
-      } else {
-        const binIdx = Math.floor(p / 25);
-        if (binIdx >= 0 && binIdx < 24) {
-          bins[binIdx].count++;
-        }
-      }
-    }
-
-    return {
-      count,
-      recommendedPrice,
-      p25Price,
-      p75Price,
-      dcWideMedianPrice,
-      bins,
-      isReliable: count >= 10,
-    };
-  }, [comparableListings, categoryFilteredListings]);
-
-  // Tab 3: Bookings & Revenue Stats
-  const { bookingsStats, bookingsRowsUsed } = useMemo<{
-    bookingsStats: BookingsRevenueStats;
-    bookingsRowsUsed: Listing[];
-  }>(() => {
-    const totalCount = comparableListings.length;
-    const activeListings = comparableListings.filter(
-      (r) => r.number_of_reviews_ltm !== null && r.number_of_reviews_ltm >= 1
-    );
-    const activeCount = activeListings.length;
-
-    const rows = includeInactive ? comparableListings : activeListings;
-    const usedCount = rows.length;
-
-    // Nights
-    const nights = rows
-      .map((r) => r.estimated_occupancy_l365d)
-      .filter((n): n is number => n !== null && !isNaN(n));
-    const medianNightsYear = calculateMedian(nights);
-    const nightsPerMonth = medianNightsYear !== null ? medianNightsYear / 12 : null;
-    const nightsP25 = calculateP25(nights);
-    const nightsP75 = calculateP75(nights);
-
-    // Revenue
-    const revenues = rows
-      .map((r) => r.estimated_revenue_l365d)
-      .filter((rv): rv is number => rv !== null && !isNaN(rv));
-    const medianRevenueYear = calculateMedian(revenues);
-    const revenuePerMonth = medianRevenueYear !== null ? medianRevenueYear / 12 : null;
-    const revenueP25 = calculateP25(revenues);
-    const revenueP75 = calculateP75(revenues);
-
-    // DC Benchmark
-    const dcRows = includeInactive
-      ? categoryFilteredListings
-      : categoryFilteredListings.filter(
-          (r) => r.number_of_reviews_ltm !== null && r.number_of_reviews_ltm >= 1
-        );
-    const dcNights = dcRows
-      .map((r) => r.estimated_occupancy_l365d)
-      .filter((n): n is number => n !== null && !isNaN(n));
-    const dcRevenues = dcRows
-      .map((r) => r.estimated_revenue_l365d)
-      .filter((rv): rv is number => rv !== null && !isNaN(rv));
-
-    const dcWideMedianNightsYear = calculateMedian(dcNights);
-    const dcWideMedianRevenueYear = calculateMedian(dcRevenues);
-
-    // Distribution of annual revenue: 11 bins ($0-$10k, $10k-$20k, ..., $90k-$100k, $100k+)
-    const revenueBins: { rangeLabel: string; min: number; max: number; count: number }[] = [];
-    const step = 10000;
-    const numBins = 10;
-    for (let i = 0; i < numBins; i++) {
-      const min = i * step;
-      const max = (i + 1) * step;
-      revenueBins.push({
-        rangeLabel: `$${min / 1000}k – $${max / 1000}k`,
-        min,
-        max,
-        count: 0,
-      });
-    }
-    revenueBins.push({
-      rangeLabel: '$100k+',
-      min: 100000,
-      max: Infinity,
-      count: 0,
-    });
-
-    for (const rv of revenues) {
-      if (rv >= 100000) {
-        revenueBins[10].count++;
-      } else {
-        const idx = Math.floor(rv / step);
-        if (idx >= 0 && idx < 10) {
-          revenueBins[idx].count++;
-        }
-      }
-    }
-
-    return {
-      bookingsStats: {
-        activeCount,
-        totalCount,
-        usedCount,
-        includeInactive,
-        medianNightsYear,
-        nightsPerMonth,
-        nightsP25,
-        nightsP75,
-        medianRevenueYear,
-        revenuePerMonth,
-        revenueP25,
-        revenueP75,
-        dcWideMedianNightsYear,
-        dcWideMedianRevenueYear,
-        revenueBins,
-        isReliable: usedCount >= 10,
-      },
-      bookingsRowsUsed: rows,
-    };
-  }, [comparableListings, categoryFilteredListings, includeInactive]);
-
-  // Tab 4: Competition Stats
-  const competitionStats = useMemo<CompetitionStats>(() => {
-    const neighborhoodCount = comparableListings.length;
-    const dcCount = categoryFilteredListings.length;
-
-    // Entire home share
-    const nEntire = comparableListings.filter((r) => r.room_type === 'Entire home/apt').length;
-    const dcEntire = categoryFilteredListings.filter((r) => r.room_type === 'Entire home/apt').length;
-    const neighborhoodEntireHomeShare = neighborhoodCount > 0 ? nEntire / neighborhoodCount : null;
-    const dcEntireHomeShare = dcCount > 0 ? dcEntire / dcCount : null;
-
-    // Multi-host share: calculated_host_listings_count >= 2
-    const nMulti = comparableListings.filter(
-      (r) => r.calculated_host_listings_count !== null && r.calculated_host_listings_count >= 2
-    ).length;
-    const dcMulti = categoryFilteredListings.filter(
-      (r) => r.calculated_host_listings_count !== null && r.calculated_host_listings_count >= 2
-    ).length;
-    const neighborhoodMultiHostShare = neighborhoodCount > 0 ? nMulti / neighborhoodCount : null;
-    const dcMultiHostShare = dcCount > 0 ? dcMulti / dcCount : null;
-
-    // Superhost share: host_is_superhost = 't'
-    const nSuper = comparableListings.filter((r) => r.host_is_superhost === 't').length;
-    const dcSuper = categoryFilteredListings.filter((r) => r.host_is_superhost === 't').length;
-    const neighborhoodSuperhostShare = neighborhoodCount > 0 ? nSuper / neighborhoodCount : null;
-    const dcSuperhostShare = dcCount > 0 ? dcSuper / dcCount : null;
-
-    // Median review score: Excel PERCENTILE.INC on review_scores_rating
-    const nRatings = comparableListings
-      .map((r) => r.review_scores_rating)
-      .filter((rt): rt is number => rt !== null && !isNaN(rt));
-    const dcRatings = categoryFilteredListings
-      .map((r) => r.review_scores_rating)
-      .filter((rt): rt is number => rt !== null && !isNaN(rt));
-
-    const neighborhoodMedianRating = calculateMedian(nRatings);
-    const dcMedianRating = calculateMedian(dcRatings);
-
-    return {
-      neighborhoodCount,
-      dcCount,
-      neighborhoodEntireHomeShare,
-      dcEntireHomeShare,
-      neighborhoodMultiHostShare,
-      dcMultiHostShare,
-      neighborhoodSuperhostShare,
-      dcSuperhostShare,
-      neighborhoodMedianRating,
-      dcMedianRating,
-      isReliable: neighborhoodCount >= 10,
-    };
-  }, [comparableListings, categoryFilteredListings]);
 
   // Tab 5: DC-Wide Amenities & Features calculation
   const { tab5Comparisons, tab5QualifyingListings } = useMemo(() => {
@@ -651,7 +387,6 @@ export default function App() {
       });
     }
 
-
     // Sort by dollar difference descending (put items with not enough data at end)
     results.sort((a, b) => {
       if (a.hasEnoughData && !b.hasEnoughData) return -1;
@@ -663,6 +398,310 @@ export default function App() {
 
     return { tab5Comparisons: results, tab5QualifyingListings: slice };
   }, [listings, tab5Bedrooms, tab5RoomType]);
+
+  // Derive empirical amenity adjustments from ownerAmenities and tab5Comparisons
+  const { netAdjustment: amenityNetAdjustment, appliedAdjustments: amenityAppliedAdjustments } =
+    useMemo(() => {
+      return calculateAmenityAdjustments(tab5Comparisons, ownerAmenities);
+    }, [tab5Comparisons, ownerAmenities]);
+
+  // Listings filtered by bedrooms, room type, and property type (across all neighborhoods for Tab 1)
+  const categoryFilteredListings = useMemo(() => {
+    return filterListingsByCategory(listings, filters.bedrooms, filters.roomType, filters.propertyType);
+  }, [listings, filters.bedrooms, filters.roomType, filters.propertyType]);
+
+  // Tab 1: Neighborhood stats across DC
+  const neighborhoodStatsMap = useMemo(() => {
+    const map = new Map<string, NeighborhoodStats>();
+
+    // Group filtered listings by neighborhood
+    const grouped: Record<string, Listing[]> = {};
+    for (const item of categoryFilteredListings) {
+      if (!item.neighbourhood_cleansed) continue;
+      if (!grouped[item.neighbourhood_cleansed]) {
+        grouped[item.neighbourhood_cleansed] = [];
+      }
+      grouped[item.neighbourhood_cleansed].push(item);
+    }
+
+    // Process all 39 DC neighborhoods from geojson or distinct neighborhoods
+    distinctNeighborhoods.forEach((name) => {
+      const items = grouped[name] || [];
+      const count = items.length;
+
+      // Prices (ignoring null/blank)
+      const prices = items.map((i) => i.price).filter((p): p is number => p !== null && !isNaN(p));
+      const medianPrice = calculateMedian(prices);
+      const adjustedMedianPrice =
+        medianPrice !== null ? Math.max(medianPrice + amenityNetAdjustment, 0) : null;
+
+      // Active listings: number_of_reviews_ltm >= 1
+      const activeItems = items.filter(
+        (i) => i.number_of_reviews_ltm !== null && i.number_of_reviews_ltm >= 1
+      );
+      const activeCount = activeItems.length;
+
+      // Occupancy (active listings only, ignoring null)
+      const occupancies = activeItems
+        .map((i) => i.estimated_occupancy_l365d)
+        .filter((o): o is number => o !== null && !isNaN(o));
+      const medianNights = calculateMedian(occupancies);
+
+      // Revenue (active listings only, ignoring null)
+      const revenues = activeItems
+        .map((i) => i.estimated_revenue_l365d)
+        .filter((rv): rv is number => rv !== null && !isNaN(rv));
+      const medianRevenue = calculateMedian(revenues);
+
+      map.set(name, {
+        neighborhood: name,
+        count,
+        activeCount,
+        medianPrice,
+        adjustedMedianPrice,
+        amenityAdjustmentTotal: amenityNetAdjustment,
+        medianNights,
+        medianRevenue,
+        isReliable: count >= 10,
+      });
+    });
+
+    return map;
+  }, [categoryFilteredListings, distinctNeighborhoods, amenityNetAdjustment]);
+
+  // Tab 2 & 3: Comparables matching all 4 shared filters
+  const comparableListings = useMemo(() => {
+    return categoryFilteredListings.filter(
+      (r) => r.neighbourhood_cleansed === filters.neighborhood
+    );
+  }, [categoryFilteredListings, filters.neighborhood]);
+
+  // Tab 2: Pricing Stats
+  const pricingStats = useMemo<PricingStats>(() => {
+    const validPrices = comparableListings
+      .map((r) => r.price)
+      .filter((p): p is number => p !== null && !isNaN(p));
+
+    const count = validPrices.length;
+    const recommendedPrice = calculateMedian(validPrices);
+    const p25Price = calculateP25(validPrices);
+    const p75Price = calculateP75(validPrices);
+
+    const adjustedRecommendedPrice =
+      recommendedPrice !== null ? Math.max(recommendedPrice + amenityNetAdjustment, 0) : null;
+    const adjustedP25Price =
+      p25Price !== null ? Math.max(p25Price + amenityNetAdjustment, 0) : null;
+    const adjustedP75Price =
+      p75Price !== null ? Math.max(p75Price + amenityNetAdjustment, 0) : null;
+
+    // DC-wide median for the exact same bedrooms, room type, property type
+    const dcPrices = categoryFilteredListings
+      .map((r) => r.price)
+      .filter((p): p is number => p !== null && !isNaN(p));
+    const dcWideMedianPrice = calculateMedian(dcPrices);
+
+    // Build $25 bins from $0 to $600 + $600+ terminal bin
+    const bins: { rangeLabel: string; min: number; max: number; count: number }[] = [];
+    for (let i = 0; i < 24; i++) {
+      const min = i * 25;
+      const max = (i + 1) * 25;
+      bins.push({
+        rangeLabel: `$${min} – $${max - 1}`,
+        min,
+        max,
+        count: 0,
+      });
+    }
+    // Final $600+ bin
+    bins.push({
+      rangeLabel: '$600+',
+      min: 600,
+      max: Infinity,
+      count: 0,
+    });
+
+    for (const p of validPrices) {
+      if (p >= 600) {
+        bins[24].count++;
+      } else {
+        const binIdx = Math.floor(p / 25);
+        if (binIdx >= 0 && binIdx < 24) {
+          bins[binIdx].count++;
+        }
+      }
+    }
+
+    return {
+      count,
+      recommendedPrice,
+      p25Price,
+      p75Price,
+      adjustedRecommendedPrice,
+      adjustedP25Price,
+      adjustedP75Price,
+      amenityAdjustmentTotal: amenityNetAdjustment,
+      appliedAdjustments: amenityAppliedAdjustments,
+      dcWideMedianPrice,
+      bins,
+      isReliable: count >= 10,
+    };
+  }, [comparableListings, categoryFilteredListings, amenityNetAdjustment, amenityAppliedAdjustments]);
+
+  // Tab 3: Bookings & Revenue Stats
+  const { bookingsStats, bookingsRowsUsed } = useMemo<{
+    bookingsStats: BookingsRevenueStats;
+    bookingsRowsUsed: Listing[];
+  }>(() => {
+    const totalCount = comparableListings.length;
+    const activeListings = comparableListings.filter(
+      (r) => r.number_of_reviews_ltm !== null && r.number_of_reviews_ltm >= 1
+    );
+    const activeCount = activeListings.length;
+
+    const rows = includeInactive ? comparableListings : activeListings;
+    const usedCount = rows.length;
+
+    // Nights
+    const nights = rows
+      .map((r) => r.estimated_occupancy_l365d)
+      .filter((n): n is number => n !== null && !isNaN(n));
+    const medianNightsYear = calculateMedian(nights);
+    const nightsPerMonth = medianNightsYear !== null ? medianNightsYear / 12 : null;
+    const nightsP25 = calculateP25(nights);
+    const nightsP75 = calculateP75(nights);
+
+    // Revenue
+    const revenues = rows
+      .map((r) => r.estimated_revenue_l365d)
+      .filter((rv): rv is number => rv !== null && !isNaN(rv));
+    const medianRevenueYear = calculateMedian(revenues);
+    const revenuePerMonth = medianRevenueYear !== null ? medianRevenueYear / 12 : null;
+    const revenueP25 = calculateP25(revenues);
+    const revenueP75 = calculateP75(revenues);
+
+    // DC Benchmark
+    const dcRows = includeInactive
+      ? categoryFilteredListings
+      : categoryFilteredListings.filter(
+          (r) => r.number_of_reviews_ltm !== null && r.number_of_reviews_ltm >= 1
+        );
+    const dcNights = dcRows
+      .map((r) => r.estimated_occupancy_l365d)
+      .filter((n): n is number => n !== null && !isNaN(n));
+    const dcRevenues = dcRows
+      .map((r) => r.estimated_revenue_l365d)
+      .filter((rv): rv is number => rv !== null && !isNaN(rv));
+
+    const dcWideMedianNightsYear = calculateMedian(dcNights);
+    const dcWideMedianRevenueYear = calculateMedian(dcRevenues);
+
+    // Distribution of annual revenue: 11 bins ($0-$10k, $10k-$20k, ..., $90k-$100k, $100k+)
+    const revenueBins: { rangeLabel: string; min: number; max: number; count: number }[] = [];
+    const step = 10000;
+    const numBins = 10;
+    for (let i = 0; i < numBins; i++) {
+      const min = i * step;
+      const max = (i + 1) * step;
+      revenueBins.push({
+        rangeLabel: `$${min / 1000}k – $${max / 1000}k`,
+        min,
+        max,
+        count: 0,
+      });
+    }
+    revenueBins.push({
+      rangeLabel: '$100k+',
+      min: 100000,
+      max: Infinity,
+      count: 0,
+    });
+
+    for (const rv of revenues) {
+      if (rv >= 100000) {
+        revenueBins[10].count++;
+      } else {
+        const idx = Math.floor(rv / step);
+        if (idx >= 0 && idx < 10) {
+          revenueBins[idx].count++;
+        }
+      }
+    }
+
+    return {
+      bookingsStats: {
+        activeCount,
+        totalCount,
+        usedCount,
+        includeInactive,
+        medianNightsYear,
+        nightsPerMonth,
+        nightsP25,
+        nightsP75,
+        medianRevenueYear,
+        revenuePerMonth,
+        revenueP25,
+        revenueP75,
+        dcWideMedianNightsYear,
+        dcWideMedianRevenueYear,
+        revenueBins,
+        isReliable: usedCount >= 10,
+      },
+      bookingsRowsUsed: rows,
+    };
+  }, [comparableListings, categoryFilteredListings, includeInactive]);
+
+  // Tab 4: Competition Stats
+  const competitionStats = useMemo<CompetitionStats>(() => {
+    const neighborhoodCount = comparableListings.length;
+    const dcCount = categoryFilteredListings.length;
+
+    // Entire home share
+    const nEntire = comparableListings.filter((r) => r.room_type === 'Entire home/apt').length;
+    const dcEntire = categoryFilteredListings.filter((r) => r.room_type === 'Entire home/apt').length;
+    const neighborhoodEntireHomeShare = neighborhoodCount > 0 ? nEntire / neighborhoodCount : null;
+    const dcEntireHomeShare = dcCount > 0 ? dcEntire / dcCount : null;
+
+    // Multi-host share: calculated_host_listings_count >= 2
+    const nMulti = comparableListings.filter(
+      (r) => r.calculated_host_listings_count !== null && r.calculated_host_listings_count >= 2
+    ).length;
+    const dcMulti = categoryFilteredListings.filter(
+      (r) => r.calculated_host_listings_count !== null && r.calculated_host_listings_count >= 2
+    ).length;
+    const neighborhoodMultiHostShare = neighborhoodCount > 0 ? nMulti / neighborhoodCount : null;
+    const dcMultiHostShare = dcCount > 0 ? dcMulti / dcCount : null;
+
+    // Superhost share: host_is_superhost = 't'
+    const nSuper = comparableListings.filter((r) => r.host_is_superhost === 't').length;
+    const dcSuper = categoryFilteredListings.filter((r) => r.host_is_superhost === 't').length;
+    const neighborhoodSuperhostShare = neighborhoodCount > 0 ? nSuper / neighborhoodCount : null;
+    const dcSuperhostShare = dcCount > 0 ? dcSuper / dcCount : null;
+
+    // Median review score: Excel PERCENTILE.INC on review_scores_rating
+    const nRatings = comparableListings
+      .map((r) => r.review_scores_rating)
+      .filter((rt): rt is number => rt !== null && !isNaN(rt));
+    const dcRatings = categoryFilteredListings
+      .map((r) => r.review_scores_rating)
+      .filter((rt): rt is number => rt !== null && !isNaN(rt));
+
+    const neighborhoodMedianRating = calculateMedian(nRatings);
+    const dcMedianRating = calculateMedian(dcRatings);
+
+    return {
+      neighborhoodCount,
+      dcCount,
+      neighborhoodEntireHomeShare,
+      dcEntireHomeShare,
+      neighborhoodMultiHostShare,
+      dcMultiHostShare,
+      neighborhoodSuperhostShare,
+      dcSuperhostShare,
+      neighborhoodMedianRating,
+      dcMedianRating,
+      isReliable: neighborhoodCount >= 10,
+    };
+  }, [comparableListings, categoryFilteredListings]);
 
   const resetFilters = () => {
     setFilters({
@@ -960,6 +999,11 @@ export default function App() {
                 onNavigateToPricing={() => setActiveTab('pricing')}
                 filters={filters}
                 filteredListings={categoryFilteredListings}
+                tabComparisons={tab5Comparisons}
+                selectedAmenities={ownerAmenities}
+                onToggleAmenity={handleToggleAmenity}
+                onSetAmenities={setOwnerAmenities}
+                amenityAdjustmentTotal={amenityNetAdjustment}
               />
             )}
 
@@ -968,6 +1012,10 @@ export default function App() {
                 filters={filters}
                 stats={pricingStats}
                 comparableListings={comparableListings}
+                tab5Comparisons={tab5Comparisons}
+                selectedAmenities={ownerAmenities}
+                onToggleAmenity={handleToggleAmenity}
+                onSetAmenities={setOwnerAmenities}
               />
             )}
 

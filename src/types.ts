@@ -48,16 +48,29 @@ export interface GeoJsonData {
   features: GeoJsonFeature[];
 }
 
-export type MapMetric = 'price' | 'occupancy' | 'revenue' | 'count';
+export type MapMetric = 'price' | 'adjustedPrice' | 'occupancy' | 'revenue' | 'count';
 
 export interface NeighborhoodStats {
   neighborhood: string;
   count: number;
   activeCount: number;
   medianPrice: number | null;
+  adjustedMedianPrice: number | null;
+  amenityAdjustmentTotal: number;
   medianNights: number | null;
   medianRevenue: number | null;
   isReliable: boolean; // count >= 10
+}
+
+export interface AmenityAdjustmentBreakdown {
+  name: string;
+  category: 'Amenity' | 'Feature';
+  dollarDifference: number;
+  impact: number; // (1 - %adoption) * median price increase
+  percentHas: number;
+  adoptionTier: 'Must-Have' | 'Common' | 'Optional';
+  isApplied: boolean;
+  notes: string;
 }
 
 export interface PricingStats {
@@ -65,6 +78,11 @@ export interface PricingStats {
   recommendedPrice: number | null;
   p25Price: number | null;
   p75Price: number | null;
+  adjustedRecommendedPrice: number | null;
+  adjustedP25Price: number | null;
+  adjustedP75Price: number | null;
+  amenityAdjustmentTotal: number;
+  appliedAdjustments: AmenityAdjustmentBreakdown[];
   dcWideMedianPrice: number | null;
   bins: { rangeLabel: string; min: number; max: number; count: number }[];
   isReliable: boolean;
