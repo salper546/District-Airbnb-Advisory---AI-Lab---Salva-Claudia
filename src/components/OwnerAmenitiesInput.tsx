@@ -4,7 +4,6 @@ import { formatCurrency } from '../utils/math';
 import {
   Sparkles,
   Check,
-  Plus,
   Wifi,
   Utensils,
   Wind,
@@ -30,6 +29,10 @@ interface OwnerAmenitiesInputProps {
   onToggleAmenity: (name: string) => void;
   onSetAmenities: (names: string[]) => void;
   netAdjustment: number;
+  matchingCount?: number;
+  hasEnoughMatchingListings?: boolean;
+  pricingDisclaimer?: string;
+  isRareInDc?: boolean;
 }
 
 export const OwnerAmenitiesInput: React.FC<OwnerAmenitiesInputProps> = ({
@@ -38,6 +41,10 @@ export const OwnerAmenitiesInput: React.FC<OwnerAmenitiesInputProps> = ({
   onToggleAmenity,
   onSetAmenities,
   netAdjustment,
+  matchingCount = 0,
+  hasEnoughMatchingListings = true,
+  pricingDisclaimer,
+  isRareInDc = false,
 }) => {
   const [isExpanded, setIsExpanded] = useState<boolean>(true);
 
@@ -132,27 +139,49 @@ export const OwnerAmenitiesInput: React.FC<OwnerAmenitiesInputProps> = ({
               </span>
             </div>
             <p className="text-[11px] text-neutral-500">
-              Each variable's price impact is calculated as <strong className="font-mono text-neutral-700">(1 - %adoption) × median price increase</strong>. Ubiquitous amenities (e.g. Wifi 99%) add minimal premium, while rare features (e.g. Pool 6%) command major value.
+              Prices come from comparable listings that have the selected amenities. Association, not cause.
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
-          {/* Net Adjustment Badge */}
-          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-neutral-100 border border-neutral-200 rounded text-xs font-mono">
-            <span className="text-neutral-500 text-[11px]">Calculated Adjustment:</span>
-            <span className={`font-bold ${netAdjustment > 0 ? 'text-emerald-700' : 'text-neutral-800'}`}>
-              {netAdjustment > 0 ? `+${formatCurrency(netAdjustment)}` : '$0'}/night
-            </span>
-          </div>
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2">
+            <div className="flex flex-col items-end">
+              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-neutral-100 border border-neutral-200 rounded text-xs font-mono">
+                <span className="text-neutral-500 text-[11px]">Calculated Adjustment:</span>
+                <span
+                  className={`font-bold ${
+                    isRareInDc
+                      ? 'text-neutral-600'
+                      : netAdjustment > 0
+                      ? 'text-emerald-700'
+                      : netAdjustment < 0
+                      ? 'text-rose-700'
+                      : 'text-neutral-800'
+                  }`}
+                >
+                  {isRareInDc
+                    ? 'Rare in DC'
+                    : netAdjustment !== 0
+                    ? `${netAdjustment > 0 ? '+' : ''}${formatCurrency(netAdjustment)}/night`
+                    : '$0/night'}
+                </span>
+              </div>
+              {pricingDisclaimer && (
+                <span className="text-[10px] text-neutral-500 font-sans mt-0.5 max-w-[280px] text-right truncate" title={pricingDisclaimer}>
+                  {pricingDisclaimer}
+                </span>
+              )}
+            </div>
 
-          <button
-            onClick={() => setIsExpanded(!isExpanded)}
-            className="p-1 text-neutral-400 hover:text-neutral-700 transition-colors cursor-pointer"
-            title={isExpanded ? 'Collapse amenities panel' : 'Expand amenities panel'}
-          >
-            {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-          </button>
+            <button
+              onClick={() => setIsExpanded(!isExpanded)}
+              className="p-1 text-neutral-400 hover:text-neutral-700 transition-colors cursor-pointer"
+              title={isExpanded ? 'Collapse amenities panel' : 'Expand amenities panel'}
+            >
+              {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -196,22 +225,16 @@ export const OwnerAmenitiesInput: React.FC<OwnerAmenitiesInputProps> = ({
           </div>
 
           {/* Amenities & Features Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 pt-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2.5 pt-1">
             {tabComparisons.map((item) => {
               const isSelected = selectedAmenities.includes(item.name);
-              const diff = item.dollarDifference;
-              const hasDiff = diff !== null && item.hasEnoughData;
-              const isPositive = hasDiff && diff > 0;
-              const pct = Math.round(item.percentHas * 100);
-              const rarityMultiplier = Math.max(1 - item.percentHas, 0);
-              const calculatedImpact =
-                hasDiff && isPositive ? Math.round(rarityMultiplier * diff) : 0;
 
               return (
                 <button
                   key={item.name}
                   onClick={() => onToggleAmenity(item.name)}
-                  className={`flex flex-col text-left p-2.5 rounded-md border transition-all cursor-pointer relative ${
+                  title={item.disclaimer}
+                  className={`flex flex-col text-left p-2.5 rounded-md border transition-all cursor-pointer relative min-h-[92px] justify-between ${
                     isSelected
                       ? 'bg-neutral-900 border-neutral-900 text-white shadow-xs'
                       : 'bg-neutral-50/70 border-neutral-200 hover:border-neutral-300 text-neutral-800 hover:bg-neutral-100/60'
@@ -237,35 +260,65 @@ export const OwnerAmenitiesInput: React.FC<OwnerAmenitiesInputProps> = ({
                     </div>
                   </div>
 
-                  <div className="mt-2 flex items-center justify-between text-[10.5px]">
-                    <span
-                      className={`font-mono text-[10px] ${
-                        isSelected ? 'text-neutral-300' : 'text-neutral-500'
-                      }`}
-                    >
-                      {pct}% adoption
-                    </span>
-
-                    {calculatedImpact > 0 ? (
-                      <span
-                        className={`font-mono font-bold text-[10px] ${
-                          isSelected
-                            ? 'text-emerald-300'
-                            : 'text-emerald-700 bg-emerald-50 px-1 rounded'
-                        }`}
-                        title={`(1 - ${pct}%) × $${diff ? Math.round(diff) : 0} = +$${calculatedImpact}/nt`}
-                      >
-                        +{formatCurrency(calculatedImpact)}/nt
-                      </span>
+                  {/* Amenity Price Difference & Confidence Disclaimers */}
+                  <div className="mt-2 w-full">
+                    {/* Requirement 3: Standard Amenities (Kitchen and Wifi) */}
+                    {item.isStandard ? (
+                      <div className="text-[10px] font-medium leading-tight">
+                        <span className={isSelected ? 'text-neutral-200' : 'text-neutral-600'}>
+                          Standard amenity: expected by guests, no measurable price premium
+                        </span>
+                      </div>
+                    ) : item.confidenceLevel === 'rare' ? (
+                      /* Requirement 2: Rare in DC */
+                      <div className="text-[10px] font-medium leading-tight text-neutral-400">
+                        Rare in DC: no comparable listings offer this amenity
+                      </div>
+                    ) : item.isSmallDifference ? (
+                      /* Requirement 4: Small differences between -$10 and +$10 */
+                      <div className="text-[10px] font-medium leading-tight">
+                        <span className={isSelected ? 'text-neutral-200' : 'text-neutral-600'}>
+                          No clear price effect
+                        </span>
+                        {/* Requirement 2: Small grey disclaimer under number */}
+                        <div
+                          className={`text-[9px] mt-1 truncate ${
+                            isSelected ? 'text-neutral-400' : 'text-neutral-500'
+                          }`}
+                          title={item.disclaimer}
+                        >
+                          {item.disclaimer}
+                        </div>
+                      </div>
                     ) : (
-                      <span
-                        className={`text-[9.5px] font-mono ${
-                          isSelected ? 'text-neutral-400' : 'text-neutral-400'
-                        }`}
-                        title="High adoption / negligible premium"
-                      >
-                        {isSelected ? '+$0/nt' : '—'}
-                      </span>
+                      /* Notable differences */
+                      <div>
+                        <span
+                          className={`font-mono font-bold text-xs ${
+                            isSelected
+                              ? item.dollarDifference! > 0
+                                ? 'text-emerald-300'
+                                : 'text-rose-300'
+                              : item.dollarDifference! > 0
+                              ? 'text-emerald-700 bg-emerald-50 px-1 py-0.2 rounded'
+                              : 'text-rose-700 bg-rose-50 px-1 py-0.2 rounded'
+                          }`}
+                        >
+                          {item.dollarDifference! > 0
+                            ? `+${formatCurrency(item.dollarDifference!)}`
+                            : `-${formatCurrency(Math.abs(item.dollarDifference!))}`}
+                          /nt
+                        </span>
+                        {/* Requirement 2: Small grey disclaimer under number */}
+                        <div
+                          className={`text-[9px] mt-1 truncate ${
+                            isSelected ? 'text-neutral-400' : 'text-neutral-500'
+                          }`}
+                          title={item.disclaimer}
+                        >
+                          {item.disclaimer}
+                        </div>
+                      </div>
                     )}
                   </div>
                 </button>

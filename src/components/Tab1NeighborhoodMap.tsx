@@ -19,6 +19,10 @@ interface Tab1Props {
   onToggleAmenity: (name: string) => void;
   onSetAmenities: (names: string[]) => void;
   amenityAdjustmentTotal: number;
+  matchingCount?: number;
+  hasEnoughMatchingListings?: boolean;
+  pricingDisclaimer?: string;
+  isRareInDc?: boolean;
 }
 
 export const Tab1NeighborhoodMap: React.FC<Tab1Props> = ({
@@ -36,6 +40,10 @@ export const Tab1NeighborhoodMap: React.FC<Tab1Props> = ({
   onToggleAmenity,
   onSetAmenities,
   amenityAdjustmentTotal,
+  matchingCount = 0,
+  hasEnoughMatchingListings = true,
+  pricingDisclaimer,
+  isRareInDc = false,
 }) => {
   const metricLabel =
     selectedMetric === 'price'
@@ -57,6 +65,10 @@ export const Tab1NeighborhoodMap: React.FC<Tab1Props> = ({
         onToggleAmenity={onToggleAmenity}
         onSetAmenities={onSetAmenities}
         netAdjustment={amenityAdjustmentTotal}
+        matchingCount={matchingCount}
+        hasEnoughMatchingListings={hasEnoughMatchingListings}
+        pricingDisclaimer={pricingDisclaimer}
+        isRareInDc={isRareInDc}
       />
 
       {/* Map & Neighborhood Rankings */}
@@ -81,10 +93,13 @@ export const Tab1NeighborhoodMap: React.FC<Tab1Props> = ({
           roomType: filters.roomType,
           propertyType: filters.propertyType,
           metric: metricLabel,
-          ownerAmenities: `${selectedAmenities.length} selected (${selectedAmenities.slice(0, 5).join(', ')}${selectedAmenities.length > 5 ? '...' : ''})`,
+          ownerAmenities:
+            selectedAmenities.length > 0
+              ? `${selectedAmenities.length} selected (${selectedAmenities.slice(0, 5).join(', ')}${selectedAmenities.length > 5 ? '...' : ''})`
+              : 'None (Showing Baseline)',
         }}
         rowsUsed={filteredListings}
-        formulaDescription={`Map aggregates all listings filtered by bedroom count (${filters.bedrooms}), room type (${filters.roomType}), and property type (${filters.propertyType}) across each of Washington DC's 39 administrative neighborhoods. Medians are calculated using Excel's linear interpolation method PERCENTILE.INC(A, 0.5). For occupancy and revenue metrics, only active listings (number_of_reviews_ltm >= 1) are evaluated. When "Amenity-Adjusted Price" is selected or inspected in the ranking table, the net empirical adjustment (+${amenityAdjustmentTotal >= 0 ? '$' + Math.round(amenityAdjustmentTotal) : '-$' + Math.abs(Math.round(amenityAdjustmentTotal))}/night) is calculated as the sum of (1 - %adoption) × median price increase for each selected feature, properly scaling by amenity rarity before adding to the baseline median.`}
+        formulaDescription={`Map aggregates all listings filtered by bedroom count (${filters.bedrooms}), room type (${filters.roomType}), and property type (${filters.propertyType}) across each of Washington DC's 39 administrative neighborhoods. Medians are calculated using Excel's linear interpolation method PERCENTILE.INC(A, 0.5). For occupancy and revenue metrics, only active listings (number_of_reviews_ltm >= 1) are evaluated. When "Amenity-Adjusted Price" is selected, each neighborhood's rate is computed from the median of its listings possessing all ${selectedAmenities.length} selected owner amenities. Neighborhoods with fewer than 10 matching listings are greyed out.`}
         customNotes="Occupancy and annual revenue figures are Inside Airbnb estimates based on public review cadence, not actual reservation books. Neighborhoods with fewer than 10 listings are flagged as less reliable."
       />
     </div>

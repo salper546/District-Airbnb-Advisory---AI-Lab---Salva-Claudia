@@ -276,7 +276,7 @@ export const Tab5AmenitiesFeatures: React.FC<Tab5Props> = ({
           roomType: roomTypeFilter,
         }}
         rowsUsed={qualifyingListings}
-        formulaDescription="For each amenity and feature, qualifying listings are divided into two distinct groups: listings possessing the feature and listings lacking it. Market adoption share equals count(has_feature) / total_listings. Medians of nightly prices are evaluated using Excel PERCENTILE.INC(A, 0.5) with linear interpolation, rounded to the nearest integer dollar. When either group contains fewer than 5 listings, the difference is marked as 'not enough data'. Washer matches 'washer' while explicitly excluding 'dishwasher'."
+        formulaDescription="For each amenity and feature, qualifying listings are divided into two distinct groups: listings possessing the feature and listings lacking it. Market adoption share equals count(has_feature) / total_listings. Medians of nightly prices are evaluated using Excel PERCENTILE.INC(A, 0.5) with linear interpolation, rounded to the nearest integer dollar. When either group contains fewer than 5 listings, the sample size is flagged as insufficient. Washer matches 'washer' while explicitly excluding 'dishwasher'."
         customNotes="This analysis indicates observed statistical association, not causation. Listings with specific luxury amenities frequently differ systematically in geographic submarket, home size, or construction year."
       />
     </div>

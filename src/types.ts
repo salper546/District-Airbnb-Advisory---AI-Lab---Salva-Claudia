@@ -60,17 +60,30 @@ export interface NeighborhoodStats {
   medianNights: number | null;
   medianRevenue: number | null;
   isReliable: boolean; // count >= 10
+  amenityMatchingCount: number;
+  isAmenityReliable: boolean; // amenityMatchingCount >= 10
 }
 
 export interface AmenityAdjustmentBreakdown {
   name: string;
   category: 'Amenity' | 'Feature';
-  dollarDifference: number;
-  impact: number; // (1 - %adoption) * median price increase
+  dollarDifference: number | null;
+  impact: number;
   percentHas: number;
+  countHas: number;
+  countNotHas: number;
+  medianPriceHas: number | null;
+  medianPriceNotHas: number | null;
+  hasEnoughData: boolean;
   adoptionTier: 'Must-Have' | 'Common' | 'Optional';
   isApplied: boolean;
   notes: string;
+  isStandard?: boolean;
+  isSmallDifference?: boolean;
+  displayText: string;
+  disclaimer: string;
+  confidenceLevel: 'neighborhood' | 'dc-category' | 'low-confidence' | 'rare' | 'standard';
+  sampleSize: number;
 }
 
 export interface PricingStats {
@@ -86,6 +99,13 @@ export interface PricingStats {
   dcWideMedianPrice: number | null;
   bins: { rangeLabel: string; min: number; max: number; count: number }[];
   isReliable: boolean;
+  matchingCount: number;
+  hasEnoughMatchingListings: boolean;
+  matchingWarning: string | null;
+  pricingConfidenceLevel: 'neighborhood' | 'dc-category' | 'low-confidence' | 'rare' | 'baseline';
+  pricingDisclaimer: string;
+  pricingListingsUsed: Listing[];
+  isRareInDc: boolean;
 }
 
 export interface BookingsRevenueStats {
@@ -133,4 +153,10 @@ export interface AmenityComparison {
   dollarDifference: number | null;
   hasEnoughData: boolean;
   adoptionTier: 'Must-Have' | 'Common' | 'Optional';
+  isStandard?: boolean;
+  isSmallDifference?: boolean;
+  displayText?: string;
+  disclaimer?: string;
+  confidenceLevel?: 'neighborhood' | 'dc-category' | 'low-confidence' | 'rare' | 'standard';
+  sampleSize?: number;
 }

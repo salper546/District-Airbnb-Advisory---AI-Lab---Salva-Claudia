@@ -178,14 +178,14 @@ export const AmenitiesBarChart: React.FC<AmenitiesBarChartProps> = ({
                   >
                     {percentStr}
                   </text>
-                  {/* Not enough data text */}
+                  {/* Insufficient sample text */}
                   <text
                     x={zeroX + 15}
                     y={y + barHeight / 2 + 4}
                     textAnchor="start"
                     className="text-[11px] italic font-sans fill-neutral-400"
                   >
-                    Not enough data (&lt;5 listings in a group)
+                    Fewer than 5 listings in sample group
                   </text>
                 </g>
               );

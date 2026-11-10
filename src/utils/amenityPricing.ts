@@ -1,67 +1,52 @@
 import { AmenityComparison, AmenityAdjustmentBreakdown } from '../types';
 
 /**
- * Derives the empirical price adjustments based on the homeowner's selected amenities
- * using the exact user-specified formula:
- * Price Impact = (1 - %adoption) * median price increase
- *
- * For high-adoption amenities (e.g., Wifi at 99%), (1 - 0.99) = 1%, adding only a marginal impact ($1).
- * For rare/differentiating amenities (e.g., Pool at 6%), (1 - 0.06) = 94%, commanding a substantial price impact ($66).
+ * Maps each amenity/feature into an itemized breakdown with confidence disclaimers.
+ * Preserves the exact displayText, disclaimer, and standard amenity classifications.
  */
-export function calculateAmenityAdjustments(
-  tabComparisons: AmenityComparison[],
+export function buildAmenityBreakdown(
+  comparisons: AmenityComparison[],
   selectedAmenities: string[]
-): {
-  netAdjustment: number;
-  appliedAdjustments: AmenityAdjustmentBreakdown[];
-} {
-  let netAdjustment = 0;
-  const appliedAdjustments: AmenityAdjustmentBreakdown[] = [];
-
-  for (const comp of tabComparisons) {
+): AmenityAdjustmentBreakdown[] {
+  return comparisons.map((comp) => {
     const isSelected = selectedAmenities.includes(comp.name);
     const diff = comp.dollarDifference;
-    const hasValidDiff = diff !== null && comp.hasEnoughData;
-    const adoptionPct = comp.percentHas; // e.g. 0.99 for 99%
-    const rarityMultiplier = Math.max(1 - adoptionPct, 0); // (1 - %adoption)
-
-    // Calculate raw potential impact: (1 - %adoption) * median price increase
-    const potentialImpact =
-      hasValidDiff && diff > 0 ? Math.round(rarityMultiplier * diff) : 0;
-
-    const actualImpact = isSelected ? potentialImpact : 0;
-
-    if (isSelected && potentialImpact > 0) {
-      netAdjustment += actualImpact;
-    }
-
-    const pctDisplay = Math.round(adoptionPct * 100);
-    const rarityDisplay = Math.round(rarityMultiplier * 100);
 
     let notes = '';
-    if (isSelected) {
-      if (hasValidDiff && diff > 0) {
-        notes = `(${rarityDisplay}% rarity multiplier) × $${Math.round(diff)} median increase = +$${actualImpact}/nt`;
-      } else if (hasValidDiff && diff <= 0) {
-        notes = `No positive median premium detected in current DC data ($0/nt)`;
-      } else {
-        notes = `Insufficient sample data to calculate reliable premium`;
-      }
+    if (comp.isStandard) {
+      notes = 'Standard amenity: expected by guests, no measurable price premium';
+    } else if (comp.confidenceLevel === 'rare') {
+      notes = 'Rare in DC: no comparable listings offer this amenity';
+    } else if (comp.isSmallDifference) {
+      notes = 'No clear price effect (difference within -$10 to +$10)';
+    } else if (diff !== null) {
+      notes = isSelected
+        ? `Offered (${diff > 0 ? `+$${diff}` : `-$${Math.abs(diff)}`}/nt difference)`
+        : `Not selected (${diff > 0 ? `+$${diff}` : `-$${Math.abs(diff)}`}/nt difference)`;
     } else {
-      notes = `Not selected for this property (potential: +$${potentialImpact}/nt)`;
+      notes = comp.disclaimer || '';
     }
 
-    appliedAdjustments.push({
+    return {
       name: comp.name,
       category: comp.category,
-      dollarDifference: hasValidDiff ? Math.round(diff) : 0,
-      impact: potentialImpact,
+      dollarDifference: comp.dollarDifference,
+      impact: isSelected && diff !== null && diff > 10 ? diff : 0,
       percentHas: comp.percentHas,
+      countHas: comp.countHas,
+      countNotHas: comp.countNotHas,
+      medianPriceHas: comp.medianPriceHas,
+      medianPriceNotHas: comp.medianPriceNotHas,
+      hasEnoughData: comp.hasEnoughData,
       adoptionTier: comp.adoptionTier,
       isApplied: isSelected,
       notes,
-    });
-  }
-
-  return { netAdjustment, appliedAdjustments };
+      isStandard: comp.isStandard,
+      isSmallDifference: comp.isSmallDifference,
+      displayText: comp.displayText || '',
+      disclaimer: comp.disclaimer || '',
+      confidenceLevel: comp.confidenceLevel || 'low-confidence',
+      sampleSize: comp.sampleSize ?? (comp.countHas + comp.countNotHas),
+    };
+  });
 }

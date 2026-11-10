@@ -11,6 +11,7 @@ interface ExpandableMethodologyProps {
   rowsUsed: Listing[];
   formulaDescription: string;
   customNotes?: string;
+  levelUsed?: string;
 }
 
 type SortField =
@@ -30,6 +31,7 @@ export const ExpandableMethodology: React.FC<ExpandableMethodologyProps> = ({
   rowsUsed,
   formulaDescription,
   customNotes,
+  levelUsed,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -164,6 +166,18 @@ export const ExpandableMethodology: React.FC<ExpandableMethodologyProps> = ({
               </div>
             </div>
           </div>
+
+          {levelUsed && (
+            <div className="text-xs text-neutral-800 bg-neutral-100 border border-neutral-300 p-3 rounded-md flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <span className="font-semibold text-neutral-900">Calculation Confidence Level: </span>
+                <span className="text-neutral-700 font-medium">{levelUsed}</span>
+              </div>
+              <span className="text-[11px] font-mono text-neutral-600 bg-white px-2 py-0.5 rounded border border-neutral-200 shrink-0">
+                {rowsUsed.length.toLocaleString()} underlying listings audited
+              </span>
+            </div>
+          )}
 
           {customNotes && (
             <div className="text-xs text-neutral-600 bg-amber-50/70 border border-amber-200/80 p-3 rounded-md">

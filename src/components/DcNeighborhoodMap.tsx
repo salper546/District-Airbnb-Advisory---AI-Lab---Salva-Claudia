@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import L from 'leaflet';
 import { GeoJsonData, MapMetric, NeighborhoodStats, SharedFilters } from '../types';
 import { formatCurrency, formatNumber } from '../utils/math';
-import { ArrowUpDown, MapPin, ChevronRight, AlertTriangle, Layers, Sparkles } from 'lucide-react';
+import { ArrowUpDown, MapPin, ChevronRight, AlertTriangle, Sparkles } from 'lucide-react';
 
 interface DcNeighborhoodMapProps {
   geoJson: GeoJsonData | null;
@@ -47,7 +47,12 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
     neighborhoodStats.forEach((st) => {
       let val: number | null = null;
       if (selectedMetric === 'price') val = st.medianPrice;
-      else if (selectedMetric === 'adjustedPrice') val = st.adjustedMedianPrice ?? st.medianPrice;
+      else if (selectedMetric === 'adjustedPrice') {
+        // Exclude neighborhoods with <10 matching listings from color ramp
+        if (st.isAmenityReliable) {
+          val = st.adjustedMedianPrice;
+        }
+      }
       else if (selectedMetric === 'occupancy') val = st.medianNights;
       else if (selectedMetric === 'revenue') val = st.medianRevenue;
       else if (selectedMetric === 'count') val = st.count;
@@ -130,7 +135,9 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
       const st = neighborhoodStats.get(name);
       if (!st) return null;
       if (selectedMetric === 'price') return st.medianPrice;
-      if (selectedMetric === 'adjustedPrice') return st.adjustedMedianPrice ?? st.medianPrice;
+      if (selectedMetric === 'adjustedPrice') {
+        return st.isAmenityReliable ? st.adjustedMedianPrice : null;
+      }
       if (selectedMetric === 'occupancy') return st.medianNights;
       if (selectedMetric === 'revenue') return st.medianRevenue;
       if (selectedMetric === 'count') return st.count;
@@ -140,6 +147,23 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
     const style = (feature: any) => {
       const name = feature.properties.neighbourhood;
       const isSelected = selectedNeighborhood === name;
+      const st = neighborhoodStats.get(name);
+
+      // Requirement 4: Grey out neighborhoods with fewer than 10 matching listings when viewing Amenity-Adjusted Price
+      if (selectedMetric === 'adjustedPrice') {
+        const isReliable = st ? st.isAmenityReliable : false;
+        if (!isReliable || !st || st.adjustedMedianPrice === null) {
+          return {
+            fillColor: '#f1f5f9',
+            weight: isSelected ? 2.5 : 1,
+            opacity: 1,
+            color: isSelected ? '#000000' : '#cbd5e1',
+            dashArray: '2',
+            fillOpacity: isSelected ? 0.6 : 0.3,
+          };
+        }
+      }
+
       const val = getFeatureValue(name);
       const fillColor = colorScale.getColor(val);
 
@@ -183,7 +207,11 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
         if (selectedMetric === 'price') {
           valDisplay = st.medianPrice ? `${formatCurrency(st.medianPrice)}/night` : 'No price data';
         } else if (selectedMetric === 'adjustedPrice') {
-          valDisplay = st.adjustedMedianPrice ? `${formatCurrency(st.adjustedMedianPrice)}/night (Adjusted)` : 'No price data';
+          if (st.isAmenityReliable && st.adjustedMedianPrice !== null) {
+            valDisplay = `${formatCurrency(st.adjustedMedianPrice)}/night (${st.amenityMatchingCount} matching)`;
+          } else {
+            valDisplay = `Fewer than 10 matching listings (${st.amenityMatchingCount} matching)`;
+          }
         } else if (selectedMetric === 'occupancy') {
           valDisplay = st.medianNights ? `${formatNumber(st.medianNights)} nights/yr` : 'No occupancy data';
         } else if (selectedMetric === 'revenue') {
@@ -217,8 +245,11 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
     // Sort list according to current sort column
     return list.sort((a, b) => {
       // Prioritize reliable >= 10 at top if sorting by value
-      if (a.isReliable !== b.isReliable) {
-        return a.isReliable ? -1 : 1;
+      const reliableA = tableSortCol === 'adjustedPrice' ? a.isAmenityReliable : a.isReliable;
+      const reliableB = tableSortCol === 'adjustedPrice' ? b.isAmenityReliable : b.isReliable;
+
+      if (reliableA !== reliableB) {
+        return reliableA ? -1 : 1;
       }
 
       let valA: number | null = 0;
@@ -231,8 +262,8 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
         valA = a.medianPrice;
         valB = b.medianPrice;
       } else if (tableSortCol === 'adjustedPrice') {
-        valA = a.adjustedMedianPrice ?? a.medianPrice;
-        valB = b.adjustedMedianPrice ?? b.medianPrice;
+        valA = a.isAmenityReliable ? a.adjustedMedianPrice : null;
+        valB = b.isAmenityReliable ? b.adjustedMedianPrice : null;
       } else if (tableSortCol === 'nights') {
         valA = a.medianNights;
         valB = b.medianNights;
@@ -288,11 +319,6 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
             >
               <Sparkles className="w-3 h-3 text-amber-400" />
               <span>Amenity-Adjusted Price</span>
-              {amenityAdjustmentTotal !== 0 && (
-                <span className="text-[10px] font-mono font-bold opacity-90">
-                  ({amenityAdjustmentTotal > 0 ? `+${formatCurrency(amenityAdjustmentTotal)}` : formatCurrency(amenityAdjustmentTotal)})
-                </span>
-              )}
             </button>
             <button
               onClick={() => onSelectMetric('occupancy')}
@@ -336,11 +362,13 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
                 <span className="text-[11px] text-neutral-500 block">Selected: {selectedNeighborhood}</span>
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-bold text-neutral-900 font-mono">
-                    {selectedStats?.adjustedMedianPrice ? formatCurrency(selectedStats.adjustedMedianPrice) : formatCurrency(selectedStats?.medianPrice)}/nt
+                    {selectedMetric === 'adjustedPrice' && selectedStats?.isAmenityReliable && selectedStats.adjustedMedianPrice !== null
+                      ? `${formatCurrency(selectedStats.adjustedMedianPrice)}/nt (Adjusted)`
+                      : `${formatCurrency(selectedStats?.medianPrice)}/nt (Baseline)`}
                   </span>
-                  {amenityAdjustmentTotal !== 0 && (
-                    <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 px-1 rounded">
-                      +{formatCurrency(amenityAdjustmentTotal)} amenities
+                  {selectedAmenitiesCount > 0 && selectedStats?.isAmenityReliable && (
+                    <span className="text-[10px] font-mono text-neutral-700 bg-neutral-200/70 px-1 rounded">
+                      {selectedStats.amenityMatchingCount} match all {selectedAmenitiesCount} amenities
                     </span>
                   )}
                 </div>
@@ -384,10 +412,14 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
                       <span className="text-neutral-500">Baseline Rate:</span>
                       <span className="font-bold">{formatCurrency(hoveredNeighborhood.stats.medianPrice)}</span>
                     </div>
-                    {amenityAdjustmentTotal !== 0 && hoveredNeighborhood.stats.adjustedMedianPrice && (
+                    {selectedAmenitiesCount > 0 && (
                       <div className="flex justify-between gap-4 text-emerald-800 font-bold bg-emerald-50/70 px-1 rounded">
-                        <span>With Owner Amenities:</span>
-                        <span>{formatCurrency(hoveredNeighborhood.stats.adjustedMedianPrice)}</span>
+                        <span>With Selected Amenities:</span>
+                        <span>
+                          {hoveredNeighborhood.stats.isAmenityReliable && hoveredNeighborhood.stats.adjustedMedianPrice !== null
+                            ? formatCurrency(hoveredNeighborhood.stats.adjustedMedianPrice)
+                            : `Fewer than 10 match (${hoveredNeighborhood.stats.amenityMatchingCount})`}
+                        </span>
                       </div>
                     )}
                     <div className="flex justify-between gap-4">
@@ -398,7 +430,12 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
                       <span className="text-neutral-500">Median Revenue/Yr:</span>
                       <span className="font-bold">{formatCurrency(hoveredNeighborhood.stats.medianRevenue)}</span>
                     </div>
-                    {!hoveredNeighborhood.stats.isReliable && (
+                    {selectedMetric === 'adjustedPrice' && !hoveredNeighborhood.stats.isAmenityReliable && (
+                      <div className="text-[10px] text-amber-700 font-sans italic mt-1 pt-1 border-t border-amber-100">
+                        Fewer than 10 listings have all selected amenities (greyed out)
+                      </div>
+                    )}
+                    {selectedMetric !== 'adjustedPrice' && !hoveredNeighborhood.stats.isReliable && (
                       <div className="text-[10px] text-amber-700 font-sans italic mt-1 pt-1 border-t border-amber-100">
                         Fewer than 10 listings (less reliable)
                       </div>
@@ -421,10 +458,14 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
                     <span className="text-neutral-500">Baseline Rate:</span>
                     <span className="font-bold">{formatCurrency(selectedStats.medianPrice)}</span>
                   </div>
-                  {amenityAdjustmentTotal !== 0 && selectedStats.adjustedMedianPrice && (
+                  {selectedAmenitiesCount > 0 && (
                     <div className="flex justify-between gap-4 text-emerald-800 font-bold bg-emerald-50/70 px-1 rounded">
                       <span>Adjusted Rate:</span>
-                      <span>{formatCurrency(selectedStats.adjustedMedianPrice)}</span>
+                      <span>
+                        {selectedStats.isAmenityReliable && selectedStats.adjustedMedianPrice !== null
+                          ? formatCurrency(selectedStats.adjustedMedianPrice)
+                          : `Fewer than 10 match (${selectedStats.amenityMatchingCount})`}
+                      </span>
                     </div>
                   )}
                 </div>
@@ -458,6 +499,12 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
                 </div>
               ))}
             </div>
+            {selectedMetric === 'adjustedPrice' && (
+              <div className="mt-2 pt-1 border-t border-neutral-200 flex items-center gap-1.5 text-[9.5px] text-neutral-500">
+                <span className="w-3 h-3 rounded-xs bg-neutral-100 border border-neutral-300 border-dashed inline-block"></span>
+                <span>Greyed out: &lt;10 matching listings</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -475,7 +522,7 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
               Neighborhood Performance Ranking
             </h3>
             <p className="text-xs text-neutral-500">
-              Ranked by {tableSortCol.toUpperCase()} across all 39 DC neighborhoods. Neighborhoods with &lt;10 listings are displayed unranked &amp; greyed out.
+              Ranked by {tableSortCol.toUpperCase()} across all 39 DC neighborhoods. Neighborhoods with &lt;10 qualifying listings are displayed unranked &amp; greyed out.
             </p>
           </div>
           <div className="text-xs text-neutral-600 font-medium">
@@ -536,7 +583,7 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
             <tbody className="divide-y divide-neutral-200">
               {tableData.map((row, index) => {
                 const isSelected = selectedNeighborhood === row.neighborhood;
-                const isRanked = row.isReliable;
+                const isRanked = tableSortCol === 'adjustedPrice' ? row.isAmenityReliable : row.isReliable;
 
                 return (
                   <tr
@@ -564,7 +611,7 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
                         </span>
                         {!isRanked && (
                           <span className="text-[9.5px] px-1.5 py-0.2 bg-neutral-200 text-neutral-600 rounded">
-                            &lt;10 listings
+                            {tableSortCol === 'adjustedPrice' ? `${row.amenityMatchingCount} match (<10)` : '<10 listings'}
                           </span>
                         )}
                         {isSelected && (
@@ -581,12 +628,14 @@ export const DcNeighborhoodMap: React.FC<DcNeighborhoodMapProps> = ({
                       {formatCurrency(row.medianPrice)}
                     </td>
                     <td className="py-2 px-3 text-right font-mono tabular-nums font-bold text-neutral-950 bg-neutral-50/50">
-                      {row.adjustedMedianPrice !== null ? (
-                        <span className={amenityAdjustmentTotal !== 0 ? 'text-emerald-900' : ''}>
+                      {row.isAmenityReliable && row.adjustedMedianPrice !== null ? (
+                        <span>
                           {formatCurrency(row.adjustedMedianPrice)}
                         </span>
                       ) : (
-                        formatCurrency(row.medianPrice)
+                        <span className="text-neutral-400 text-[11px] font-normal italic">
+                          &lt;10 matching
+                        </span>
                       )}
                     </td>
                     <td className="py-2 px-3 text-right font-mono tabular-nums">

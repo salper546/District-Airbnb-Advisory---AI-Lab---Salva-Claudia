@@ -17,7 +17,13 @@ import {
   SharedFilters,
 } from './types';
 import { calculateMedian, calculateP25, calculateP75 } from './utils/math';
-import { calculateAmenityAdjustments } from './utils/amenityPricing';
+import { buildAmenityBreakdown } from './utils/amenityPricing';
+import {
+  parseAmenities,
+  listingHasAllSelected,
+  computeComparableAmenityComparisons,
+  computeAmenityAdjustedPrice,
+} from './utils/amenityMatching';
 import { Tab1NeighborhoodMap } from './components/Tab1NeighborhoodMap';
 import { Tab2Pricing } from './components/Tab2Pricing';
 import { Tab3BookingsRevenue } from './components/Tab3BookingsRevenue';
@@ -56,15 +62,8 @@ export default function App() {
   });
 
   // Owner Property Amenities & Features State (Shared between Tab 1 & Tab 2)
-  const [ownerAmenities, setOwnerAmenities] = useState<string[]>([
-    'Wifi',
-    'Air conditioning',
-    'Kitchen',
-    'Washer',
-    'Dryer',
-    'Dedicated workspace',
-    'Self check-in',
-  ]);
+  // Requirement 7: Start with no amenities selected by default, so first price shown is always baseline.
+  const [ownerAmenities, setOwnerAmenities] = useState<string[]>([]);
 
   const handleToggleAmenity = (name: string) => {
     setOwnerAmenities((prev) =>
@@ -88,7 +87,11 @@ export default function App() {
       try {
         setLoading(true);
         const data = await fetchAirbnbData();
-        setListings(data.listings);
+        // Requirement 1: Use only short-stay listings in every calculation in the app: keep listings with minimum_nights under 30
+        const shortStayListings = data.listings.filter(
+          (l) => l.minimum_nights !== null && l.minimum_nights < 30
+        );
+        setListings(shortStayListings);
         setGeoJson(data.geoJson);
 
         // If Capitol Hill isn't present, default to the first available neighborhood
@@ -319,6 +322,20 @@ export default function App() {
           ? medianPriceHas - medianPriceNotHas
           : null;
 
+      const isStandard = def.name === 'Wifi' || def.name === 'Kitchen';
+      const isSmallDiff =
+        !isStandard && dollarDifference !== null && dollarDifference >= -10 && dollarDifference <= 10;
+      const disclaimer = isStandard
+        ? 'Standard amenity: expected by guests, no measurable price premium'
+        : `Based on ${totalCount} listings across DC`;
+      const displayText = isStandard
+        ? 'Standard amenity: expected by guests, no measurable price premium'
+        : isSmallDiff
+        ? 'No clear price effect'
+        : dollarDifference !== null
+        ? `${dollarDifference >= 0 ? '+' : '-'}$${Math.round(Math.abs(dollarDifference))}/nt`
+        : 'Rare in DC: no comparable listings offer this amenity';
+
       results.push({
         name: def.name,
         category: 'Amenity',
@@ -331,6 +348,12 @@ export default function App() {
         dollarDifference,
         hasEnoughData,
         adoptionTier,
+        isStandard,
+        isSmallDifference: isSmallDiff,
+        displayText,
+        disclaimer,
+        confidenceLevel: isStandard ? 'standard' : 'dc-category',
+        sampleSize: totalCount,
       });
     }
 
@@ -372,6 +395,15 @@ export default function App() {
           ? medianPriceHas - medianPriceNotHas
           : null;
 
+      const isSmallDiff =
+        dollarDifference !== null && dollarDifference >= -10 && dollarDifference <= 10;
+      const disclaimer = `Based on ${totalCount} listings across DC`;
+      const displayText = isSmallDiff
+        ? 'No clear price effect'
+        : dollarDifference !== null
+        ? `${dollarDifference >= 0 ? '+' : '-'}$${Math.round(Math.abs(dollarDifference))}/nt`
+        : 'Rare in DC: no comparable listings offer this amenity';
+
       results.push({
         name: def.name,
         category: 'Feature',
@@ -384,6 +416,11 @@ export default function App() {
         dollarDifference,
         hasEnoughData,
         adoptionTier,
+        isSmallDifference: isSmallDiff,
+        displayText,
+        disclaimer,
+        confidenceLevel: 'dc-category',
+        sampleSize: totalCount,
       });
     }
 
@@ -399,18 +436,46 @@ export default function App() {
     return { tab5Comparisons: results, tab5QualifyingListings: slice };
   }, [listings, tab5Bedrooms, tab5RoomType]);
 
-  // Derive empirical amenity adjustments from ownerAmenities and tab5Comparisons
-  const { netAdjustment: amenityNetAdjustment, appliedAdjustments: amenityAppliedAdjustments } =
-    useMemo(() => {
-      return calculateAmenityAdjustments(tab5Comparisons, ownerAmenities);
-    }, [tab5Comparisons, ownerAmenities]);
-
   // Listings filtered by bedrooms, room type, and property type (across all neighborhoods for Tab 1)
   const categoryFilteredListings = useMemo(() => {
     return filterListingsByCategory(listings, filters.bedrooms, filters.roomType, filters.propertyType);
   }, [listings, filters.bedrooms, filters.roomType, filters.propertyType]);
 
+  // Tab 2 & 3: Comparables matching all 4 shared filters
+  const comparableListings = useMemo(() => {
+    return categoryFilteredListings.filter(
+      (r) => r.neighbourhood_cleansed === filters.neighborhood
+    );
+  }, [categoryFilteredListings, filters.neighborhood]);
+
+  // Requirement 2, 3, 4: Within current comparables with fallbacks and confidence disclaimers
+  const comparableAmenityComparisons = useMemo(() => {
+    return computeComparableAmenityComparisons(
+      comparableListings,
+      categoryFilteredListings,
+      listings,
+      filters.neighborhood
+    );
+  }, [comparableListings, categoryFilteredListings, listings, filters.neighborhood]);
+
+  // Requirement 2 & 3: Amenity-adjusted price following fallback order and ignoring Kitchen & Wifi
+  const pricingCalculation = useMemo(() => {
+    return computeAmenityAdjustedPrice(
+      comparableListings,
+      categoryFilteredListings,
+      listings,
+      filters.neighborhood,
+      ownerAmenities
+    );
+  }, [comparableListings, categoryFilteredListings, listings, filters.neighborhood, ownerAmenities]);
+
+  const appliedAdjustments = useMemo(() => {
+    return buildAmenityBreakdown(comparableAmenityComparisons, ownerAmenities);
+  }, [comparableAmenityComparisons, ownerAmenities]);
+
   // Tab 1: Neighborhood stats across DC
+  // Requirement 4: Map "Amenity-Adjusted Price": for each neighborhood, use the median price
+  // of its listings that have all the selected amenities. Grey out neighborhoods with fewer than 10 matching listings.
   const neighborhoodStatsMap = useMemo(() => {
     const map = new Map<string, NeighborhoodStats>();
 
@@ -424,7 +489,10 @@ export default function App() {
       grouped[item.neighbourhood_cleansed].push(item);
     }
 
-    // Process all 39 DC neighborhoods from geojson or distinct neighborhoods
+    const effectiveSelectedAmenities = ownerAmenities.filter(
+      (a) => a !== 'Wifi' && a !== 'Kitchen'
+    );
+
     distinctNeighborhoods.forEach((name) => {
       const items = grouped[name] || [];
       const count = items.length;
@@ -432,8 +500,23 @@ export default function App() {
       // Prices (ignoring null/blank)
       const prices = items.map((i) => i.price).filter((p): p is number => p !== null && !isNaN(p));
       const medianPrice = calculateMedian(prices);
-      const adjustedMedianPrice =
-        medianPrice !== null ? Math.max(medianPrice + amenityNetAdjustment, 0) : null;
+
+      let amenityMatchingCount = count;
+      let adjustedMedianPrice = medianPrice;
+      let isAmenityReliable = count >= 10;
+
+      if (effectiveSelectedAmenities.length > 0) {
+        const matchingItems = items.filter((r) => {
+          const amen = parseAmenities(r.amenities);
+          return listingHasAllSelected(r, amen, effectiveSelectedAmenities);
+        });
+        amenityMatchingCount = matchingItems.length;
+        const matchingPrices = matchingItems
+          .map((i) => i.price)
+          .filter((p): p is number => p !== null && !isNaN(p));
+        isAmenityReliable = amenityMatchingCount >= 10;
+        adjustedMedianPrice = isAmenityReliable ? calculateMedian(matchingPrices) : null;
+      }
 
       // Active listings: number_of_reviews_ltm >= 1
       const activeItems = items.filter(
@@ -459,22 +542,17 @@ export default function App() {
         activeCount,
         medianPrice,
         adjustedMedianPrice,
-        amenityAdjustmentTotal: amenityNetAdjustment,
+        amenityAdjustmentTotal: pricingCalculation.calculatedAdjustment,
         medianNights,
         medianRevenue,
         isReliable: count >= 10,
+        amenityMatchingCount,
+        isAmenityReliable,
       });
     });
 
     return map;
-  }, [categoryFilteredListings, distinctNeighborhoods, amenityNetAdjustment]);
-
-  // Tab 2 & 3: Comparables matching all 4 shared filters
-  const comparableListings = useMemo(() => {
-    return categoryFilteredListings.filter(
-      (r) => r.neighbourhood_cleansed === filters.neighborhood
-    );
-  }, [categoryFilteredListings, filters.neighborhood]);
+  }, [categoryFilteredListings, distinctNeighborhoods, ownerAmenities, pricingCalculation.calculatedAdjustment]);
 
   // Tab 2: Pricing Stats
   const pricingStats = useMemo<PricingStats>(() => {
@@ -486,13 +564,6 @@ export default function App() {
     const recommendedPrice = calculateMedian(validPrices);
     const p25Price = calculateP25(validPrices);
     const p75Price = calculateP75(validPrices);
-
-    const adjustedRecommendedPrice =
-      recommendedPrice !== null ? Math.max(recommendedPrice + amenityNetAdjustment, 0) : null;
-    const adjustedP25Price =
-      p25Price !== null ? Math.max(p25Price + amenityNetAdjustment, 0) : null;
-    const adjustedP75Price =
-      p75Price !== null ? Math.max(p75Price + amenityNetAdjustment, 0) : null;
 
     // DC-wide median for the exact same bedrooms, room type, property type
     const dcPrices = categoryFilteredListings
@@ -536,16 +607,28 @@ export default function App() {
       recommendedPrice,
       p25Price,
       p75Price,
-      adjustedRecommendedPrice,
-      adjustedP25Price,
-      adjustedP75Price,
-      amenityAdjustmentTotal: amenityNetAdjustment,
-      appliedAdjustments: amenityAppliedAdjustments,
+      adjustedRecommendedPrice: pricingCalculation.adjustedPrice,
+      adjustedP25Price: pricingCalculation.adjustedP25,
+      adjustedP75Price: pricingCalculation.adjustedP75,
+      amenityAdjustmentTotal: pricingCalculation.calculatedAdjustment,
+      appliedAdjustments,
       dcWideMedianPrice,
       bins,
       isReliable: count >= 10,
+      matchingCount: pricingCalculation.matchingCount,
+      hasEnoughMatchingListings: pricingCalculation.hasEnoughMatchingListings,
+      matchingWarning: pricingCalculation.matchingWarning,
+      pricingConfidenceLevel: pricingCalculation.pricingConfidenceLevel,
+      pricingDisclaimer: pricingCalculation.pricingDisclaimer,
+      pricingListingsUsed: pricingCalculation.pricingListingsUsed,
+      isRareInDc: pricingCalculation.isRareInDc,
     };
-  }, [comparableListings, categoryFilteredListings, amenityNetAdjustment, amenityAppliedAdjustments]);
+  }, [
+    comparableListings,
+    categoryFilteredListings,
+    pricingCalculation,
+    appliedAdjustments,
+  ]);
 
   // Tab 3: Bookings & Revenue Stats
   const { bookingsStats, bookingsRowsUsed } = useMemo<{
@@ -888,9 +971,12 @@ export default function App() {
             {activeTab !== 'amenities' && (
               <section className="bg-white border border-neutral-200 rounded-lg p-4 shadow-sm space-y-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-neutral-100 pb-2.5">
-                  <div className="flex items-center gap-2 text-xs font-semibold text-neutral-700">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-neutral-700 flex-wrap">
                     <Filter className="w-3.5 h-3.5 text-neutral-500" />
                     <span>Property Comparison Filters (Shared across Tabs 1–4)</span>
+                    <span className="text-[11px] font-normal text-neutral-500 bg-neutral-100 border border-neutral-200 px-2 py-0.5 rounded">
+                      Short stays only (minimum stay under 30 nights): {listings.length.toLocaleString()} listings
+                    </span>
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="text-xs text-neutral-500 font-mono">
@@ -999,11 +1085,15 @@ export default function App() {
                 onNavigateToPricing={() => setActiveTab('pricing')}
                 filters={filters}
                 filteredListings={categoryFilteredListings}
-                tabComparisons={tab5Comparisons}
+                tabComparisons={comparableAmenityComparisons}
                 selectedAmenities={ownerAmenities}
                 onToggleAmenity={handleToggleAmenity}
                 onSetAmenities={setOwnerAmenities}
-                amenityAdjustmentTotal={amenityNetAdjustment}
+                amenityAdjustmentTotal={pricingCalculation.calculatedAdjustment}
+                matchingCount={pricingCalculation.matchingCount}
+                hasEnoughMatchingListings={pricingCalculation.hasEnoughMatchingListings}
+                pricingDisclaimer={pricingCalculation.pricingDisclaimer}
+                isRareInDc={pricingCalculation.isRareInDc}
               />
             )}
 
@@ -1012,7 +1102,8 @@ export default function App() {
                 filters={filters}
                 stats={pricingStats}
                 comparableListings={comparableListings}
-                tab5Comparisons={tab5Comparisons}
+                matchingListings={pricingCalculation.pricingListingsUsed}
+                tab5Comparisons={comparableAmenityComparisons}
                 selectedAmenities={ownerAmenities}
                 onToggleAmenity={handleToggleAmenity}
                 onSetAmenities={setOwnerAmenities}
