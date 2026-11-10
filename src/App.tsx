@@ -432,56 +432,107 @@ export default function App() {
     // Filter listings strictly by Tab 5 room type and bedrooms
     const slice = filterListingsByCategory(listings, tab5Bedrooms, tab5RoomType, 'Any');
 
-    // 12 Amenities definitions
-    const amenityDefs: { name: string; test: (amenities: string) => boolean }[] = [
-      { name: 'Wifi', test: (a) => a.toLowerCase().includes('wifi') },
-      { name: 'Kitchen', test: (a) => a.toLowerCase().includes('kitchen') },
+    // Helper to parse amenities string into list of individual items
+    const parseAmenities = (raw: string): string[] => {
+      if (!raw) return [];
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          return parsed.map((item) => String(item).trim());
+        }
+      } catch {
+        // Fallback if not standard JSON
+      }
+      return raw
+        .replace(/^\[|\]$/g, '')
+        .split(',')
+        .map((s) => s.replace(/^["'\s]+|["'\s]+$/g, ''))
+        .filter(Boolean);
+    };
+
+    // Pre-parse amenities per listing in slice
+    const parsedSlice = slice.map((r) => ({
+      listing: r,
+      items: parseAmenities(r.amenities),
+    }));
+
+    // 12 Amenities definitions matched against each item in the amenities list
+    const amenityDefs: { name: string; matchItem: (item: string) => boolean }[] = [
+      { name: 'Wifi', matchItem: (item) => item.toLowerCase().includes('wifi') },
+      { name: 'Kitchen', matchItem: (item) => item.toLowerCase().includes('kitchen') },
       {
         name: 'Washer',
-        test: (a) => a.toLowerCase().replace(/dishwasher/gi, '').includes('washer'),
+        matchItem: (item) => {
+          const lower = item.toLowerCase();
+          return lower.includes('washer') && !lower.includes('dishwasher');
+        },
       },
-      { name: 'Dryer', test: (a) => a.toLowerCase().includes('dryer') },
+      {
+        name: 'Dryer',
+        matchItem: (item) => {
+          const lower = item.toLowerCase();
+          return lower.includes('dryer') && !lower.includes('hair dryer');
+        },
+      },
       {
         name: 'Air conditioning',
-        test: (a) =>
-          a.toLowerCase().includes('air conditioning') ||
-          a.toLowerCase().includes('central air') ||
-          a.toLowerCase().includes('ac unit'),
+        matchItem: (item) => {
+          const lower = item.toLowerCase();
+          return (
+            lower.includes('air conditioning') ||
+            lower.includes('central air') ||
+            lower.includes('ac unit')
+          );
+        },
       },
       {
         name: 'Free parking',
-        test: (a) =>
-          a.toLowerCase().includes('free parking') ||
-          a.toLowerCase().includes('free street parking') ||
-          a.toLowerCase().includes('free driveway parking'),
+        matchItem: (item) => {
+          const lower = item.toLowerCase();
+          return (
+            (lower.includes('free parking') || lower.includes('free driveway parking')) &&
+            !lower.includes('free street parking') &&
+            !lower.includes('street')
+          );
+        },
       },
       {
         name: 'Dedicated workspace',
-        test: (a) => a.toLowerCase().includes('dedicated workspace'),
+        matchItem: (item) => item.toLowerCase().includes('dedicated workspace'),
       },
-      { name: 'Pool', test: (a) => a.toLowerCase().includes('pool') },
+      {
+        name: 'Pool',
+        matchItem: (item) => {
+          const lower = item.toLowerCase();
+          return (
+            lower.includes('pool') &&
+            !lower.includes('pool table') &&
+            !lower.includes('whirlpool')
+          );
+        },
+      },
       {
         name: 'Gym',
-        test: (a) =>
-          a.toLowerCase().includes('gym') ||
-          a.toLowerCase().includes('exercise equipment') ||
-          a.toLowerCase().includes('fitness center'),
+        matchItem: (item) => item.toLowerCase().includes('gym'),
       },
       {
         name: 'Self check-in',
-        test: (a) =>
-          a.toLowerCase().includes('self check-in') ||
-          a.toLowerCase().includes('smart lock') ||
-          a.toLowerCase().includes('keypad'),
+        matchItem: (item) => {
+          const lower = item.toLowerCase();
+          return (
+            lower.includes('self check-in') ||
+            lower.includes('smart lock') ||
+            lower.includes('keypad')
+          );
+        },
       },
-      { name: 'Pets allowed', test: (a) => a.toLowerCase().includes('pets allowed') },
-      { name: 'Dishwasher', test: (a) => a.toLowerCase().includes('dishwasher') },
+      { name: 'Pets allowed', matchItem: (item) => item.toLowerCase().includes('pets allowed') },
+      { name: 'Dishwasher', matchItem: (item) => item.toLowerCase().includes('dishwasher') },
     ];
 
-    // 4 Features definitions
+    // 3 Features definitions
     const featureDefs: { name: string; test: (row: Listing) => boolean }[] = [
       { name: 'Superhost', test: (r) => r.host_is_superhost === 't' },
-      { name: 'Instant bookable', test: (r) => r.instant_bookable === 't' },
       {
         name: 'Review score ≥ 4.8',
         test: (r) => r.review_scores_rating !== null && r.review_scores_rating >= 4.8,
@@ -494,17 +545,17 @@ export default function App() {
 
     const results: AmenityComparison[] = [];
 
-    // Evaluate Amenities
+    // Evaluate Amenities (matching item by item)
     for (const def of amenityDefs) {
       const hasList: number[] = [];
       const notHasList: number[] = [];
 
-      for (const r of slice) {
-        if (r.price === null || isNaN(r.price)) continue;
-        if (def.test(r.amenities)) {
-          hasList.push(r.price);
+      for (const entry of parsedSlice) {
+        if (entry.listing.price === null || isNaN(entry.listing.price)) continue;
+        if (entry.items.some((item) => def.matchItem(item))) {
+          hasList.push(entry.listing.price);
         } else {
-          notHasList.push(r.price);
+          notHasList.push(entry.listing.price);
         }
       }
 
